@@ -10,6 +10,10 @@ ci_script.py
 import os
 import sys
 from openai import OpenAI
+import subprocess
+
+diff = subprocess.check_output(["git", "diff", "HEAD~1..HEAD"], text=True)
+
 
 def main():
     print("Hello from ci_script.py — Dani CI test")
@@ -29,14 +33,14 @@ def main():
         resp = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a concise helpful assistant."},
-                {"role": "user", "content": "Say a short confirmation that you received this prompt."}
+                {"role": "system", "content": "You are an engineer. Review the provided git diff and suggest improvements."},
+                {"role": "user", "content": f"Here is the git diff:\n\n{diff}"}
             ],
-            max_tokens=60,
+            max_tokens=500,
         )
 
         # Extract the assistant message safely
-        assistant_text = None
+        assistant_text = resp.choices[0].message.content
         try:
             # Many SDK responses store text at resp.choices[0].message.content
             choice = resp.choices[0]
