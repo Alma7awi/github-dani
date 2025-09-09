@@ -27,3 +27,18 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           python ci_script.py
+
+      - name: Save AI review
+        run: echo "${{ steps.ai.outputs.review }}" > review_comment.txt
+
+      - name: Add comment to PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: require('fs').readFileSync('review_comment.txt', 'utf8')
+            })
+
