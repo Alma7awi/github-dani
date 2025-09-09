@@ -15,11 +15,13 @@ from openai import OpenAI
 
 def get_git_diff():
     try:
-        # Try normal diff (last commit vs previous commit)
+        # Check if HEAD~1 exists
+        subprocess.check_output(["git", "rev-parse", "HEAD~1"], stderr=subprocess.DEVNULL)
         return subprocess.check_output(["git", "diff", "HEAD~1..HEAD"], text=True)
     except subprocess.CalledProcessError:
-        # Fallback for very first commit: just show the initial commit diff
+        # Fallback for very first commit
         return subprocess.check_output(["git", "show", "HEAD"], text=True)
+
 
 
 def main():
