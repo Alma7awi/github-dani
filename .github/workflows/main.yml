@@ -2,8 +2,9 @@ name: CI - OpenAI smoke test
 
 on:
   push:
-    # runs on any push (branch or PR). You can restrict branches if you prefer.
-    # branches: [ main ]
+    branches: [ main ]
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 jobs:
   openai-test:
@@ -28,19 +29,17 @@ jobs:
         run: |
           python ci_script.py
 
-      - name: Save AI review
-        run: echo "${{ steps.ai.outputs.review }}" > review_comment.txt
-
       - name: Add comment to PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('review_comment.txt', 'utf8');
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: require('fs').readFileSync('review_comment.txt', 'utf8')
-            })
-
+              body: body
+            });
 
