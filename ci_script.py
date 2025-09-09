@@ -9,10 +9,17 @@ ci_script.py
 
 import os
 import sys
-from openai import OpenAI
 import subprocess
+from openai import OpenAI
 
-diff = subprocess.check_output(["git", "diff", "HEAD~1..HEAD"], text=True)
+
+def get_git_diff():
+    try:
+        # Try normal diff (last commit vs previous commit)
+        return subprocess.check_output(["git", "diff", "HEAD~1..HEAD"], text=True)
+    except subprocess.CalledProcessError:
+        # Fallback for very first commit: just show the initial commit diff
+        return subprocess.check_output(["git", "show", "HEAD"], text=True)
 
 
 def main():
@@ -25,7 +32,10 @@ def main():
     else:
         print("OPENAI_API_KEY found in environment (will NOT print it).")
 
-    # Create client (we pass api_key explicitly for clarity; the library also reads the env var)
+    # Get git diff
+    diff = get_git_diff()
+
+    # Create client
     client = OpenAI(api_key=api_key)
 
     try:
@@ -39,24 +49,15 @@ def main():
             max_tokens=500,
         )
 
-        # Extract the assistant message safely
+        # Extract the assistant message
         assistant_text = resp.choices[0].message.content
-        try:
-            # Many SDK responses store text at resp.choices[0].message.content
-            choice = resp.choices[0]
-            message_obj = getattr(choice, "message", None) or choice.get("message", None)
-            if message_obj:
-                assistant_text = getattr(message_obj, "content", None) or message_obj.get("content", None)
-        except Exception:
-            assistant_text = None
 
-        if not assistant_text:
-            # fallback: print whole response (safe for debugging)
-            print("OpenAI response (raw):")
-            print(resp)
-        else:
-            print("OpenAI response:")
-            print(assistant_text.strip())
+        print("OpenAI response:")
+        print(assistant_text.strip())
+
+        # Save response to file (for workflow comment step)
+        with open("review_comment.txt", "w") as f:
+            f.write(assistant_text.strip())
 
     except Exception as e:
         print("OpenAI API request failed:", e)
@@ -65,3 +66,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
