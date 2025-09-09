@@ -61,9 +61,18 @@ def main():
         with open("review_comment.txt", "w") as f:
             f.write(assistant_text.strip())
 
-    except Exception as e:
+        except Exception as e:
+    msg = str(e)
+    if "insufficient_quota" in msg:
+        assistant_text = "⚠️ OpenAI quota exceeded — cannot generate review right now."
+        print(assistant_text)
+        with open("review_comment.txt", "w") as f:
+            f.write(assistant_text)
+        sys.exit(0)  # exit successfully so workflow continues
+    else:
         print("OpenAI API request failed:", e)
         sys.exit(1)
+
 
 
 if __name__ == "__main__":
