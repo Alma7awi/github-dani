@@ -29,16 +29,12 @@ jobs:
         run: |
           python ci_script.py
 
-      # Debug step to see PR info
-      - name: Print PR context
+      - name: Debug PR context
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            console.log("PR detected!");
-            console.log("Issue number:", context.issue.number);
-            console.log("Event name:", github.context.eventName);
+        run: |
+          echo "PR detected!"
+          echo "Issue number: ${{ github.event.pull_request.number }}"
+          echo "Event name: $GITHUB_EVENT_NAME"
 
       - name: Add comment to PR
         if: github.event_name == 'pull_request'
