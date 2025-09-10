@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env 
 """
 ci_script.py
 - Reads diff.txt
