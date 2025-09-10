@@ -40,7 +40,7 @@ def main():
 
     try:
         resp = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-3.5-turo",
             messages=[
                 {"role": "system", "content": "You are an engineer. Review the provided git diff and suggest improvements."},
                 {"role": "user", "content": f"Here is the git diff:\n\n{diff}"}
