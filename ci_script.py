@@ -23,6 +23,8 @@ def get_git_diff():
         return subprocess.check_output(["git", "show", "HEAD"], text=True)
 
 
+
+
 def main():
     print("Hello from ci_script.py — Dani CI test")
 
