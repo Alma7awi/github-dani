@@ -62,4 +62,3 @@ jobs:
               console.log("No review comment generated, skipping PR comment.");
             }
 
-
