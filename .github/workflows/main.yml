@@ -22,26 +22,27 @@ jobs:
           echo "Diff file created with size:"
           wc -l diff.txt
 
-      # Step 3: Install dependencies
+      # Step 3: Setup Python
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.11"
 
+      # Step 4: Install dependencies
       - name: Install requirements
         run: |
           python -m pip install --upgrade pip
-          pip install openai
+          pip install openai PyGithub
 
-      # Step 4: Run CI script
+      # Step 5: Run CI script
       - name: Run OpenAI Review Script
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.github-dani }}   # map your secret to expected variable
+          GITHUB_TOKEN: ${{ secrets.github-dani }}   # map your secret here
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-
         run: python ci_script.py
+
 
       # Step 5: Post comment to PR
       - name: Post comment to PR
