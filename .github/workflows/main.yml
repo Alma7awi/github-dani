@@ -37,7 +37,7 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: body || "⚠️ No review text generated."
+              body: body || "⚠️ No reiew text generated."
             });
 
 
