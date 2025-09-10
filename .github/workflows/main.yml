@@ -43,7 +43,6 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python ci_script.py
 
-
       # Step 5: Post comment to PR
       - name: Post comment to PR
         uses: actions/github-script@v7
