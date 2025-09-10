@@ -34,12 +34,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install openai PyGithub
 
-      # Step 5: Run CI script
       - name: Run OpenAI Review Script
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # map your secret here
+            OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+            PR_NUMBER: ${{ github.event.pull_request.number }}
+            GITHUB_REPOSITORY: ${{ github.repository }}
+            run: python ci_script.py
 
-        run: python ci_script.py
 
       # Step 5: Post comment to PR
       - name: Post comment to PR
