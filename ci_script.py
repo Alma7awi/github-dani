@@ -1,4 +1,4 @@
-#!/usr/bin/env 
+#!/usr/b
 """
 ci_script.py
 - Reads diff.txt
