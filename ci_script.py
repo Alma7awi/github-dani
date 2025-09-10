@@ -3,13 +3,27 @@
 ci_script.py
 - Prints hello
 - Verifies OPENAI_API_KEY exists (won't print the key)
-- Calls OpenAI Chat Completion API with a system + user prompt
-- Prints the assistant reply
+- Gets git diff
+- Calls OpenAI Chat Completion API
+- Saves response or quota warning into review_comment.txt
 """
 
 import os
 import sys
+import subprocess
 from openai import OpenAI
+
+
+def get_git_diff():
+    try:
+        # Try normal diff (last commit vs previous commit)
+        return subprocess.check_output(["git", "diff", "HEAD~1..HEAD"], text=True)
+    except subprocess.CalledProcessError:
+        # Fallback for very first commit
+        return subprocess.check_output(["git", "show", "HEAD"], text=True)
+
+
+
 
 def main():
     print("Hello from ci_script.py — Dani CI test")
@@ -21,42 +35,35 @@ def main():
     else:
         print("OPENAI_API_KEY found in environment (will NOT print it).")
 
-    # Create client (we pass api_key explicitly for clarity; the library also reads the env var)
+    diff = get_git_diff()
     client = OpenAI(api_key=api_key)
 
     try:
-        # Chat completions style: system + user
         resp = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a concise helpful assistant."},
-                {"role": "user", "content": "Say a short confirmation that you received this prompt."}
+                {"role": "system", "content": "You are an engineer. Review the provided git diff and suggest improvements."},
+                {"role": "user", "content": f"Here is the git diff:\n\n{diff}"}
             ],
-            max_tokens=60,
+            max_tokens=500,
         )
 
-        # Extract the assistant message safely
-        assistant_text = None
-        try:
-            # Many SDK responses store text at resp.choices[0].message.content
-            choice = resp.choices[0]
-            message_obj = getattr(choice, "message", None) or choice.get("message", None)
-            if message_obj:
-                assistant_text = getattr(message_obj, "content", None) or message_obj.get("content", None)
-        except Exception:
-            assistant_text = None
-
-        if not assistant_text:
-            # fallback: print whole response (safe for debugging)
-            print("OpenAI response (raw):")
-            print(resp)
-        else:
-            print("OpenAI response:")
-            print(assistant_text.strip())
+        assistant_text = resp.choices[0].message.content.strip()
+        print("OpenAI response:")
+        print(assistant_text)
 
     except Exception as e:
-        print("OpenAI API request failed:", e)
-        sys.exit(1)
+        msg = str(e)
+        if "insufficient_quota" in msg:
+            assistant_text = "⚠️ OpenAI quota exceeded — cannot generate review right now."
+            print(assistant_text)
+        else:
+            print("OpenAI API request failed:", e)
+            sys.exit(1)
+
+    # Always save something to review_comment.txt
+    with open("review_comment.txt", "w") as f:
+        f.write(assistant_text)
 
 
 if __name__ == "__main__":
