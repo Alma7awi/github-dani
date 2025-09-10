@@ -19,7 +19,7 @@ def main():
     # Environment variables
     # -----------------------------
     openai_key = os.environ.get("OPENAI_API_KEY")
-    github_token = os.environ.get("github-dani")  # can be PAT
+    github_token = os.environ.get("GITHUB_TOKEN")  # can be PAT
     pr_number = os.environ.get("PR_NUMBER")
     repo_name = os.environ.get("GITHUB_REPOSITORY")  # e.g., owner/repo
 
