@@ -4,7 +4,7 @@ ci_script.py
 - Reads diff.txt
 - Calls OpenAI for code review
 - Posts comment to GitHub PR
-- Handles quota issues, forked PRs, and deprecated auth
+- Handles quota issues, forked PRs, and deprecated 
 """
 
 import os
