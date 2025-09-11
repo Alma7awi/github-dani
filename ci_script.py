@@ -1,8 +1,8 @@
 import os
 import sys
 import asyncio
-from openai import AsyncAzureOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from openai import AsyncAzureOpenAI
 from github import Github, Auth
 
 # -----------------------------
@@ -10,7 +10,7 @@ from github import Github, Auth
 # -----------------------------
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 PR_NUMBER = os.environ.get("PR_NUMBER")
-REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
+REPO_NAME = os.environ.get("GITHUB_REPOSITORY")  # e.g., owner/repo
 DIFF_FILE = "diff.txt"
 
 if not GITHUB_TOKEN:
@@ -28,26 +28,28 @@ else:
         diff_content = f.read()
 
 if not diff_content.strip():
-    review_comment = "⚠️ No changes detected in diff."
-else:
-    review_comment = ""  # will be overwritten by OpenAI
+    print("No changes detected in diff.")
+    diff_content = ""
 
 # -----------------------------
-# Call Azure OpenAI
+# Azure OpenAI call
 # -----------------------------
 async def get_openai_review(diff_text: str) -> str:
     try:
+        # Get token provider
         token_provider = get_bearer_token_provider(
             DefaultAzureCredential(),
             "https://cognitiveservices.azure.com/.default"
         )
 
+        # Create AsyncAzureOpenAI client
         client = AsyncAzureOpenAI(
             azure_endpoint="https://alpheya-oai.qwlth.dev",
             api_version="2024-09-01-preview",
             azure_ad_token_provider=token_provider
         )
 
+        # Send chat completion request
         resp = await client.chat.completions.create(
             model="gpt-4o-2024-08-06",
             messages=[
@@ -60,7 +62,7 @@ async def get_openai_review(diff_text: str) -> str:
 
         comment_text = resp.choices[0].message.content.strip()
         if not comment_text:
-            comment_text = "⚠️ OpenAI returned an empty review. Here is the diff as fallback:\n\n" + diff_text
+            comment_text = "⚠️ OpenAI returned an empty review."
         return comment_text
 
     except Exception as e:
@@ -71,13 +73,15 @@ async def get_openai_review(diff_text: str) -> str:
 # Main async function
 # -----------------------------
 async def main():
-    global review_comment
-    if diff_content.strip():
-        review_comment = await get_openai_review(diff_content)
+    # Generate review comment
+    review_comment = await get_openai_review(diff_content)
 
-    # -----------------------------
-    # Post comment to GitHub PR
-    # -----------------------------
+    # Write fallback comment file (optional)
+    with open("review_comment.txt", "w") as f:
+        f.write(review_comment)
+    print("✅ review_comment.txt written successfully")
+
+    # Post comment to PR
     if not PR_NUMBER or not REPO_NAME:
         print("INFO: PR number or repo not set. Skipping PR comment (likely a forked PR).")
         return
@@ -93,3 +97,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
