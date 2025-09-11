@@ -59,5 +59,7 @@ jobs:
               });
             } else {
               console.log("No review comment generated, skipping PR comment.");
+            } else {
+              console.log("review_comment.txt not found, skipping comment.");
             }
 
