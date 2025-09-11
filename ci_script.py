@@ -4,12 +4,22 @@ ci_script.py
 - Calls OpenAI for code review
 - Posts comment to GitHub PR
 - Handles quota issues, forked PRs, and deprecated 
-"""
 
 import os
 import sys
 from openai import OpenAI
 from github import Github, Auth
+
+print("Hello from ci_script.py — Dani CI test")
+
+# Example content (replace this with your OpenAI API call result)
+review_text = "✅ Code Review:\nLooks good, but consider adding more comments."
+
+# Save to file so GitHub Action can read it
+with open("review_comment.txt", "w") as f:
+    f.write(review_text)
+
+print("review_comment.txt written successfully")
 
 def main():
     print("Hello from ci_script.py — Dani CI test")
