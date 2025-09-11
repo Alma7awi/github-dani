@@ -1,25 +1,16 @@
-
+"""
 ci_script.py
 - Reads diff.txt
 - Calls OpenAI for code review
+- Saves review_comment.txt for GitHub Action
 - Posts comment to GitHub PR
-- Handles quota issues, forked PRs, and deprecated 
+- Handles quota issues, forked PRs, and deprecations
+"""
 
 import os
 import sys
 from openai import OpenAI
 from github import Github, Auth
-
-print("Hello from ci_script.py — Dani CI test")
-
-# Example content (replace this with your OpenAI API call result)
-review_text = "✅ Code Review:\nLooks good, but consider adding more comments."
-
-# Save to file so GitHub Action can read it
-with open("review_comment.txt", "w") as f:
-    f.write(review_text)
-
-print("review_comment.txt written successfully")
 
 def main():
     print("Hello from ci_script.py — Dani CI test")
@@ -85,6 +76,13 @@ def main():
                 print(review_comment)
 
     # -----------------------------
+    # Save review_comment.txt for GitHub Action
+    # -----------------------------
+    with open("review_comment.txt", "w") as f:
+        f.write(review_comment)
+    print("✅ review_comment.txt written successfully")
+
+    # -----------------------------
     # Post comment to GitHub PR
     # -----------------------------
     if post_comment:
@@ -99,5 +97,7 @@ def main():
     else:
         print("PR comment skipped (forked PR or missing info).")
 
+
 if __name__ == "__main__":
     main()
+
