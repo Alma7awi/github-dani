@@ -1,14 +1,6 @@
-"""
-ci_script.py
-- Reads diff.txt
-- Calls OpenAI for code review
-- Saves review_comment.txt for GitHub Action
-- Posts comment to GitHub PR
-- Handles quota issues, forked PRs, and deprecations
-"""
-
 import os
 import sys
+import subprocess
 from openai import OpenAI
 from github import Github, Auth
 
@@ -19,7 +11,7 @@ def main():
     # Environment variables
     # -----------------------------
     openai_key = os.environ.get("OPENAI_API_KEY")
-    github_token = os.environ.get("GITHUB_TOKEN")  # can be PAT
+    github_token = os.environ.get("GITHUB_TOKEN")  # PAT or Actions token
     pr_number = os.environ.get("PR_NUMBER")
     repo_name = os.environ.get("GITHUB_REPOSITORY")  # e.g., owner/repo
 
@@ -29,22 +21,24 @@ def main():
     if not github_token:
         print("ERROR: GITHUB_TOKEN not set.")
         sys.exit(1)
-    if not pr_number or not repo_name:
+
+    post_comment = bool(pr_number and repo_name)
+    if not post_comment:
         print("INFO: PR number or repo not set. Skipping PR comment (likely a forked PR).")
-        post_comment = False
-    else:
-        post_comment = True
 
     # -----------------------------
-    # Read diff.txt
+    # Get git diff in memory
     # -----------------------------
-    diff_file = "diff.txt"
-    if not os.path.exists(diff_file):
-        print(f"ERROR: {diff_file} not found.")
+    try:
+        diff = subprocess.check_output(
+            ["git", "fetch", "origin", "main"], text=True
+        )
+        diff = subprocess.check_output(
+            ["git", "diff", "origin/main...HEAD"], text=True
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"ERROR fetching or generating diff: {e}")
         sys.exit(1)
-
-    with open(diff_file, "r") as f:
-        diff = f.read()
 
     if not diff.strip():
         review_comment = "No changes detected in diff."
@@ -64,7 +58,7 @@ def main():
                 max_tokens=500,
             )
             review_comment = resp.choices[0].message.content.strip()
-            print("OpenAI response:\n", review_comment)
+            print("OpenAI review:\n", review_comment)
 
         except Exception as e:
             msg = str(e)
@@ -76,7 +70,7 @@ def main():
                 print(review_comment)
 
     # -----------------------------
-    # Save review_comment.txt for GitHub Action
+    # Save comment for GitHub Action
     # -----------------------------
     with open("review_comment.txt", "w") as f:
         f.write(review_comment)
@@ -87,7 +81,7 @@ def main():
     # -----------------------------
     if post_comment:
         try:
-            g = Github(auth=Auth.Token(github_token))  # new auth method
+            g = Github(auth=Auth.Token(github_token))
             repo = g.get_repo(repo_name)
             pr = repo.get_pull(int(pr_number))
             pr.create_issue_comment(review_comment)
@@ -96,7 +90,6 @@ def main():
             print(f"⚠️ Failed to post comment: {e}")
     else:
         print("PR comment skipped (forked PR or missing info).")
-
 
 if __name__ == "__main__":
     main()
