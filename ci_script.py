@@ -20,22 +20,20 @@ if not GITHUB_TOKEN:
 # -----------------------------
 # Read the diff
 # -----------------------------
-if not os.path.exists(DIFF_FILE):
-    print(f"ERROR: {DIFF_FILE} not found.")
-    diff_content = ""
-else:
+if os.path.exists(DIFF_FILE):
     with open(DIFF_FILE, "r") as f:
         diff_content = f.read()
-
-if not diff_content.strip():
-    review_comment = "No changes detected in diff."
 else:
-    review_comment = ""  # will be overwritten by OpenAI
+    print(f"WARNING: {DIFF_FILE} not found, using empty diff.")
+    diff_content = ""
 
 # -----------------------------
 # Call Azure OpenAI
 # -----------------------------
 async def get_openai_review(diff_text: str) -> str:
+    if not diff_text.strip():
+        return "No changes detected in diff."
+
     try:
         token_provider = get_bearer_token_provider(
             DefaultAzureCredential(),
@@ -71,9 +69,7 @@ async def get_openai_review(diff_text: str) -> str:
 # Main async function
 # -----------------------------
 async def main():
-    global review_comment
-    if diff_content.strip():
-        review_comment = await get_openai_review(diff_content)
+    review_comment = await get_openai_review(diff_content)
 
     # Always write the comment file for fallback
     with open("review_comment.txt", "w") as f:
