@@ -1,6 +1,12 @@
+name: PR Review Bot
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write  # ✅ allow posting PR comments
 
 jobs:
   code-review:
@@ -46,17 +52,18 @@ jobs:
       - name: Post comment to PR
         uses: actions/github-script@v7
         with:
-         github-token: ${{ secrets.GITHUB_TOKEN }}
-         script: |
-           const fs = require('fs');
-           const comment = fs.readFileSync('review_comment.txt', 'utf8');
-           if (comment.trim()) {
-           await github.rest.issues.createComment({
-           owner: context.repo.owner,
-           repo: context.repo.repo,
-           issue_number: context.issue.number,
-           body: comment
-           });
-           } else {
-            console.log("No review comment generated, skipping PR comment.");
-           }
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const comment = fs.readFileSync('review_comment.txt', 'utf8');
+            if (comment.trim()) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: comment
+              });
+            } else {
+              console.log("No review comment generated, skipping PR comment.");
+            }
+
