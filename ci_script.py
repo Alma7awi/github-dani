@@ -5,41 +5,30 @@ from github import Github, Auth
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from openai import AsyncAzureOpenAI
 
-# -----------------------------
-# Environment variables
-# -----------------------------
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 PR_NUMBER = os.environ.get("PR_NUMBER")
 REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
 DIFF_FILE = "diff.txt"
 
-if not GITHUB_TOKEN:
-    print("ERROR: GITHUB_TOKEN not set.")
-    sys.exit(1)
-
-# -----------------------------
 # Read diff
-# -----------------------------
-if not os.path.exists(DIFF_FILE):
-    diff_content = ""
-else:
+if os.path.exists(DIFF_FILE):
     with open(DIFF_FILE, "r") as f:
         diff_content = f.read()
+else:
+    diff_content = ""
 
 if not diff_content.strip():
     review_comment = "No changes detected in diff."
 else:
     review_comment = ""  # will be overwritten by OpenAI
 
-# -----------------------------
-# Call Azure OpenAI
-# -----------------------------
 async def get_openai_review(diff_text: str) -> str:
     try:
         token_provider = get_bearer_token_provider(
             DefaultAzureCredential(),
             "https://cognitiveservices.azure.com/.default"
         )
+
         client = AsyncAzureOpenAI(
             azure_endpoint="https://alpheya-oai.qwlth.dev",
             api_version="2024-09-01-preview",
@@ -58,16 +47,13 @@ async def get_openai_review(diff_text: str) -> str:
 
         comment_text = resp.choices[0].message.content.strip()
         if not comment_text:
-            comment_text = "⚠️ OpenAI returned empty review, using diff as fallback:\n\n" + diff_text
+            comment_text = "⚠️ OpenAI returned empty review. Diff as fallback:\n\n" + diff_text
         return comment_text
 
     except Exception as e:
         print("⚠️ OpenAI request failed:", e)
-        return "⚠️ OpenAI could not generate review. Here is the diff as fallback:\n\n" + diff_text
+        return "⚠️ OpenAI could not generate review. Diff as fallback:\n\n" + diff_text
 
-# -----------------------------
-# Main async function
-# -----------------------------
 async def main():
     global review_comment
     if diff_content.strip():
@@ -78,9 +64,7 @@ async def main():
         f.write(review_comment)
     print("✅ review_comment.txt written successfully")
 
-    # -----------------------------
-    # Post comment to GitHub PR
-    # -----------------------------
+    # Post comment to GitHub
     if PR_NUMBER and REPO_NAME:
         try:
             g = Github(auth=Auth.Token(GITHUB_TOKEN))
@@ -90,8 +74,6 @@ async def main():
             print(f"✅ Comment posted to PR #{PR_NUMBER}")
         except Exception as e:
             print(f"⚠️ Failed to post comment: {e}")
-    else:
-        print("INFO: PR number or repo not set. Skipping PR comment.")
 
 if __name__ == "__main__":
     asyncio.run(main())
