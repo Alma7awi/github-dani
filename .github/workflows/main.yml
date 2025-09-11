@@ -18,6 +18,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Debug Git branches
+        run: |
+          git branch -a
+          git remote -v
+          git log --oneline -5
+
+
       # Step 2: Generate diff
       - name: Generate diff
         run: |
