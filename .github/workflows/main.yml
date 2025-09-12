@@ -11,6 +11,7 @@ permissions:
 jobs:
   code-review:
     runs-on: ubuntu-latest
+
     steps:
       # Step 1: Checkout code
       - name: Checkout code
@@ -38,14 +39,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install openai PyGithub azure-identity
 
-      # Step 5: Azure login (for OIDC token)
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          auth-type: IDENTITY
-          allow-no-subscriptions: true
-
-      # Step 6: Run OpenAI review script
+      # Step 5: Run OpenAI Review Script
       - name: Run OpenAI Review Script
         continue-on-error: true
         env:
@@ -53,16 +47,17 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python ci_script.py
 
-      # Step 7: Post comment to PR (fallback)
+      # Step 6: Post comment to PR
       - name: Post comment to PR
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const commentPath = 'review_comment.txt';
-            if (fs.existsSync(commentPath)) {
-              const comment = fs.readFileSync(commentPath, 'utf8');
+            const commentFile = 'review_comment.txt';
+            if (fs.existsSync(commentFile)) {
+              const comment = fs.readFileSync(commentFile, 'utf8');
               if (comment.trim()) {
                 await github.rest.issues.createComment({
                   owner: context.repo.owner,
