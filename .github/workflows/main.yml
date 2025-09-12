@@ -43,6 +43,7 @@ jobs:
         uses: azure/login@v2
         with:
           auth-type: IDENTITY
+          allow-no-subscriptions: true
 
       # Step 6: Run OpenAI review script
       - name: Run OpenAI Review Script
