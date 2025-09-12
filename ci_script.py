@@ -32,32 +32,32 @@ if not diff_content.strip():
     diff_content = ""
 
 # -----------------------------
-# Azure OpenAI call
+# Azure OpenAI call (no API key needed)
 # -----------------------------
 async def get_openai_review(diff_text: str) -> str:
     try:
-        # Get token provider
+        # Get Azure AD token provider
         token_provider = get_bearer_token_provider(
             DefaultAzureCredential(),
             "https://cognitiveservices.azure.com/.default"
         )
 
-        # Create AsyncAzureOpenAI client
+        # Async Azure OpenAI client
         client = AsyncAzureOpenAI(
             azure_endpoint="https://alpheya-oai.qwlth.dev",
             api_version="2024-09-01-preview",
-            azure_ad_token_provider=token_provider
+            azure_ad_token_provider=token_provider,
         )
 
-        # Send chat completion request
+        # Call Azure OpenAI
         resp = await client.chat.completions.create(
             model="gpt-4o-2024-08-06",
             messages=[
                 {"role": "system", "content": "You are a senior software engineer reviewing code changes."},
-                {"role": "user", "content": f"Please review this git diff:\n\n{diff_text}"}
+                {"role": "user", "content": f"Please review this git diff and provide concise PR comments:\n\n{diff_text}"}
             ],
             temperature=0.7,
-            max_tokens=700
+            max_tokens=700,
         )
 
         comment_text = resp.choices[0].message.content.strip()
@@ -73,17 +73,16 @@ async def get_openai_review(diff_text: str) -> str:
 # Main async function
 # -----------------------------
 async def main():
-    # Generate review comment
     review_comment = await get_openai_review(diff_content)
 
-    # Write fallback comment file (optional)
+    # Save comment for GitHub Action
     with open("review_comment.txt", "w") as f:
         f.write(review_comment)
     print("✅ review_comment.txt written successfully")
 
     # Post comment to PR
     if not PR_NUMBER or not REPO_NAME:
-        print("INFO: PR number or repo not set. Skipping PR comment (likely a forked PR).")
+        print("INFO: PR number or repo not set. Skipping PR comment.")
         return
 
     try:
@@ -97,4 +96,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
