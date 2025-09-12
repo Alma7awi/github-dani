@@ -6,11 +6,11 @@ from openai import AsyncAzureOpenAI
 from github import Github, Auth
 
 # -----------------------------
-# Environment variables
+# Env vars
 # -----------------------------
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 PR_NUMBER = os.environ.get("PR_NUMBER")
-REPO_NAME = os.environ.get("GITHUB_REPOSITORY")  # e.g., owner/repo
+REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
 DIFF_FILE = "diff.txt"
 
 if not GITHUB_TOKEN:
@@ -18,7 +18,7 @@ if not GITHUB_TOKEN:
     sys.exit(1)
 
 # -----------------------------
-# Read the diff
+# Read diff
 # -----------------------------
 if not os.path.exists(DIFF_FILE):
     print(f"ERROR: {DIFF_FILE} not found.")
@@ -28,62 +28,53 @@ else:
         diff_content = f.read()
 
 if not diff_content.strip():
-    print("No changes detected in diff.")
-    diff_content = ""
+    diff_content = "No changes detected in diff."
 
 # -----------------------------
 # Azure OpenAI call
 # -----------------------------
 async def get_openai_review(diff_text: str) -> str:
     try:
-        # Get token provider from Azure Identity
         token_provider = get_bearer_token_provider(
             DefaultAzureCredential(),
             "https://cognitiveservices.azure.com/.default"
         )
 
-        # Create Async Azure OpenAI client (no API key needed)
         client = AsyncAzureOpenAI(
             azure_endpoint="https://alpheya-oai.qwlth.dev",
             api_version="2024-09-01-preview",
             azure_ad_token_provider=token_provider,
         )
 
-        # Send chat completion request
-        resp = await client.chat.completions.create(
+        res = await client.chat.completions.create(
             model="gpt-4o-2024-08-06",
             messages=[
-                {"role": "system", "content": "You are a senior software engineer reviewing code changes. Be concise, specific, and actionable."},
-                {"role": "user", "content": f"Please review this git diff and provide PR comments:\n\n{diff_text}"}
+                {"role": "system", "content": "You are a senior software engineer reviewing code changes."},
+                {"role": "user", "content": f"Please review this git diff and provide concise PR comments:\n\n{diff_text}"}
             ],
-            temperature=0.7,
-            max_tokens=700
+            temperature=0.3,
+            max_tokens=700,
         )
 
-        comment_text = resp.choices[0].message.content.strip()
-        if not comment_text:
-            comment_text = "⚠️ OpenAI returned an empty review."
-        return comment_text
+        comment = res.choices[0].message.content.strip()
+        return comment or "⚠️ OpenAI returned an empty review."
 
     except Exception as e:
         print("⚠️ OpenAI request failed:", e)
-        return "⚠️ OpenAI could not generate review. Diff as fallback:\n\n" + diff_text
+        return f"⚠️ OpenAI could not generate review. Diff as fallback:\n\n{diff_text}"
 
 # -----------------------------
-# Main async function
+# Main
 # -----------------------------
 async def main():
-    # Generate review comment
     review_comment = await get_openai_review(diff_content)
 
-    # Write comment to file
     with open("review_comment.txt", "w") as f:
         f.write(review_comment)
-    print("✅ review_comment.txt written successfully")
+    print("✅ review_comment.txt written")
 
-    # Post comment to PR
     if not PR_NUMBER or not REPO_NAME:
-        print("INFO: PR number or repo not set. Skipping PR comment (likely a forked PR).")
+        print("ℹ️ PR number/repo not set. Skipping GitHub comment.")
         return
 
     try:
@@ -93,7 +84,7 @@ async def main():
         pr.create_issue_comment(review_comment)
         print(f"✅ Comment posted to PR #{PR_NUMBER}")
     except Exception as e:
-        print(f"⚠️ Failed to post comment to GitHub PR: {e}")
+        print("⚠️ Failed to post comment:", e)
 
 if __name__ == "__main__":
     asyncio.run(main())
