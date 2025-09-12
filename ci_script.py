@@ -42,7 +42,7 @@ async def get_openai_review(diff_text: str) -> str:
             "https://cognitiveservices.azure.com/.default"
         )
 
-        # Create Async Azure OpenAI client
+        # Create Async Azure OpenAI client (no API key needed)
         client = AsyncAzureOpenAI(
             azure_endpoint="https://alpheya-oai.qwlth.dev",
             api_version="2024-09-01-preview",
