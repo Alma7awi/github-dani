@@ -22,13 +22,10 @@ if not GITHUB_TOKEN:
 # -----------------------------
 if not os.path.exists(DIFF_FILE):
     print(f"⚠️ {DIFF_FILE} not found. Skipping OpenAI review.")
-    diff_content = ""
+    diff_content = "No changes detected."
 else:
     with open(DIFF_FILE, "r") as f:
-        diff_content = f.read()
-
-if not diff_content.strip():
-    diff_content = "No changes detected."
+        diff_content = f.read().strip() or "No changes detected."
 
 # -----------------------------
 # Azure OpenAI call
@@ -57,9 +54,7 @@ async def get_openai_review(diff_text: str) -> str:
         )
 
         comment_text = resp.choices[0].message.content.strip()
-        if not comment_text:
-            comment_text = "⚠️ OpenAI returned an empty review."
-        return comment_text
+        return comment_text or "⚠️ OpenAI returned an empty review."
 
     except Exception as e:
         print("⚠️ OpenAI request failed:", e)
