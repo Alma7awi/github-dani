@@ -1,46 +1,33 @@
 import os
 import sys
 import asyncio
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from openai import AsyncAzureOpenAI
 from github import Github, Auth
 
-# -----------------------------
 # Env vars
-# -----------------------------
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 PR_NUMBER = os.environ.get("PR_NUMBER")
 REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
+AZURE_OPENAI_KEY = os.environ.get("AZURE_OPENAI_KEY")
 DIFF_FILE = "diff.txt"
 
-if not GITHUB_TOKEN:
-    print("❌ ERROR: GITHUB_TOKEN not set.")
+if not GITHUB_TOKEN or not AZURE_OPENAI_KEY:
+    print("❌ ERROR: Required environment variables are not set.")
     sys.exit(1)
 
-# -----------------------------
 # Read diff
-# -----------------------------
-if not os.path.exists(DIFF_FILE):
-    print(f"⚠️ {DIFF_FILE} not found. Skipping OpenAI review.")
-    diff_content = "No changes detected."
-else:
+diff_content = "No changes detected."
+if os.path.exists(DIFF_FILE):
     with open(DIFF_FILE, "r") as f:
-        diff_content = f.read().strip() or "No changes detected."
+        diff_content = f.read().strip() or diff_content
 
-# -----------------------------
-# Azure OpenAI call
-# -----------------------------
+# OpenAI call
 async def get_openai_review(diff_text: str) -> str:
     try:
-        token_provider = get_bearer_token_provider(
-            DefaultAzureCredential(),
-            "https://cognitiveservices.azure.com/.default"
-        )
-
         client = AsyncAzureOpenAI(
             azure_endpoint="https://alpheya-oai.qwlth.dev",
             api_version="2024-09-01-preview",
-            azure_ad_token_provider=token_provider,
+            api_key=AZURE_OPENAI_KEY
         )
 
         resp = await client.chat.completions.create(
@@ -53,20 +40,15 @@ async def get_openai_review(diff_text: str) -> str:
             max_tokens=700,
         )
 
-        comment_text = resp.choices[0].message.content.strip()
-        return comment_text or "⚠️ OpenAI returned an empty review."
+        return resp.choices[0].message.content.strip() or "⚠️ OpenAI returned an empty review."
 
     except Exception as e:
         print("⚠️ OpenAI request failed:", e)
         return f"⚠️ OpenAI could not generate review. Diff as fallback:\n\n{diff_text}"
 
-# -----------------------------
 # Main
-# -----------------------------
 async def main():
     review_comment = await get_openai_review(diff_content)
-
-    # ✅ Always try to post to PR
     try:
         g = Github(auth=Auth.Token(GITHUB_TOKEN))
         repo = g.get_repo(REPO_NAME)
@@ -75,7 +57,6 @@ async def main():
         print(f"✅ Comment posted to PR #{PR_NUMBER}")
     except Exception as e:
         print(f"❌ Failed to post comment: {e}")
-        # fallback: write to file
         with open("review_comment.txt", "w") as f:
             f.write(review_comment)
         print("💾 Saved review_comment.txt instead")
