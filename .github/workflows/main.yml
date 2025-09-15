@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
 
-      # Step 1: Checkout code (skip submodules to avoid exit 128)
+      # Step 1: Checkout code (skip submodules)
       - name: Checkout code
         uses: actions/checkout@v3
         with:
@@ -49,4 +49,5 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           AZURE_OPENAI_KEY: ${{ secrets.AZURE_OPENAI_KEY }}
         run: python ci_script.py
+
 
