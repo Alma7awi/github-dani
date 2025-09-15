@@ -4,24 +4,31 @@ import asyncio
 from openai import AsyncAzureOpenAI
 from github import Github, Auth
 
-# Env vars
+# -----------------------------
+# Environment variables
+# -----------------------------
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 PR_NUMBER = os.environ.get("PR_NUMBER")
 REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
 AZURE_OPENAI_KEY = os.environ.get("AZURE_OPENAI_KEY")
 DIFF_FILE = "diff.txt"
 
+# Check required env vars
 if not GITHUB_TOKEN or not AZURE_OPENAI_KEY:
     print("❌ ERROR: Required environment variables are not set.")
     sys.exit(1)
 
-# Read diff
+# -----------------------------
+# Read git diff
+# -----------------------------
 diff_content = "No changes detected."
 if os.path.exists(DIFF_FILE):
     with open(DIFF_FILE, "r") as f:
         diff_content = f.read().strip() or diff_content
 
-# OpenAI call
+# -----------------------------
+# Call Azure OpenAI
+# -----------------------------
 async def get_openai_review(diff_text: str) -> str:
     try:
         client = AsyncAzureOpenAI(
@@ -46,9 +53,12 @@ async def get_openai_review(diff_text: str) -> str:
         print("⚠️ OpenAI request failed:", e)
         return f"⚠️ OpenAI could not generate review. Diff as fallback:\n\n{diff_text}"
 
-# Main
+# -----------------------------
+# Post review to PR
+# -----------------------------
 async def main():
     review_comment = await get_openai_review(diff_content)
+
     try:
         g = Github(auth=Auth.Token(GITHUB_TOKEN))
         repo = g.get_repo(REPO_NAME)
@@ -63,4 +73,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
