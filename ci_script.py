@@ -1,6 +1,7 @@
 import os
 import sys
 import asyncio
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from openai import AsyncAzureOpenAI
 from github import Github, Auth
 
@@ -10,18 +11,10 @@ from github import Github, Auth
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 PR_NUMBER = os.environ.get("PR_NUMBER")
 REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
-AZURE_OPENAI_KEY = os.environ.get("AZURE_OPENAI_KEY")
 DIFF_FILE = "diff.txt"
 
 # Check required env vars
-missing_vars = []
-for var_name, value in [("GITHUB_TOKEN", GITHUB_TOKEN),
-                        ("PR_NUMBER", PR_NUMBER),
-                        ("GITHUB_REPOSITORY", REPO_NAME),
-                        ("AZURE_OPENAI_KEY", AZURE_OPENAI_KEY)]:
-    if not value:
-        missing_vars.append(var_name)
-
+missing_vars = [v for v in ["GITHUB_TOKEN", "PR_NUMBER", "GITHUB_REPOSITORY"] if not os.environ.get(v)]
 if missing_vars:
     print(f"❌ ERROR: Missing required environment variables: {', '.join(missing_vars)}")
     sys.exit(1)
@@ -35,6 +28,14 @@ if os.path.exists(DIFF_FILE):
         diff_content = f.read().strip() or diff_content
 
 # -----------------------------
+# Get runtime token from Azure
+# -----------------------------
+token_provider = get_bearer_token_provider(
+    DefaultAzureCredential(),
+    "https://cognitiveservices.azure.com/.default"
+)
+
+# -----------------------------
 # Call Azure OpenAI
 # -----------------------------
 async def get_openai_review(diff_text: str) -> str:
@@ -42,7 +43,7 @@ async def get_openai_review(diff_text: str) -> str:
         client = AsyncAzureOpenAI(
             azure_endpoint="https://alpheya-oai.qwlth.dev",
             api_version="2024-09-01-preview",
-            api_key=AZURE_OPENAI_KEY
+            azure_ad_token_provider=token_provider,
         )
 
         resp = await client.chat.completions.create(
@@ -75,11 +76,9 @@ async def main():
         print(f"✅ Comment posted to PR #{PR_NUMBER}")
     except Exception as e:
         print(f"❌ Failed to post comment: {e}")
-        # fallback: write to file
         with open("review_comment.txt", "w") as f:
             f.write(review_comment)
         print("💾 Saved review_comment.txt instead")
 
 if __name__ == "__main__":
     asyncio.run(main())
-
