@@ -14,8 +14,16 @@ AZURE_OPENAI_KEY = os.environ.get("AZURE_OPENAI_KEY")
 DIFF_FILE = "diff.txt"
 
 # Check required env vars
-if not GITHUB_TOKEN or not AZURE_OPENAI_KEY:
-    print("❌ ERROR: Required environment variables are not set.")
+missing_vars = []
+for var_name, value in [("GITHUB_TOKEN", GITHUB_TOKEN),
+                        ("PR_NUMBER", PR_NUMBER),
+                        ("GITHUB_REPOSITORY", REPO_NAME),
+                        ("AZURE_OPENAI_KEY", AZURE_OPENAI_KEY)]:
+    if not value:
+        missing_vars.append(var_name)
+
+if missing_vars:
+    print(f"❌ ERROR: Missing required environment variables: {', '.join(missing_vars)}")
     sys.exit(1)
 
 # -----------------------------
@@ -67,9 +75,11 @@ async def main():
         print(f"✅ Comment posted to PR #{PR_NUMBER}")
     except Exception as e:
         print(f"❌ Failed to post comment: {e}")
+        # fallback: write to file
         with open("review_comment.txt", "w") as f:
             f.write(review_comment)
         print("💾 Saved review_comment.txt instead")
 
 if __name__ == "__main__":
     asyncio.run(main())
+
