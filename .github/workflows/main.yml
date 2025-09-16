@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
 
-      # Step 1: Checkout code (no submodules to avoid errors)
+      # Step 1: Checkout code
       - name: Checkout code
         uses: actions/checkout@v3
         with:
@@ -47,5 +47,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python ci_script.py
+
 
