@@ -28,16 +28,13 @@ if os.path.exists(DIFF_FILE):
         diff_content = f.read().strip() or diff_content
 
 # -----------------------------
-# Get runtime token from Azure
+# Azure OpenAI client
 # -----------------------------
 token_provider = get_bearer_token_provider(
     DefaultAzureCredential(),
     "https://cognitiveservices.azure.com/.default"
 )
 
-# -----------------------------
-# Call Azure OpenAI
-# -----------------------------
 async def get_openai_review(diff_text: str) -> str:
     try:
         client = AsyncAzureOpenAI(
@@ -57,7 +54,6 @@ async def get_openai_review(diff_text: str) -> str:
         )
 
         return resp.choices[0].message.content.strip() or "⚠️ OpenAI returned an empty review."
-
     except Exception as e:
         print("⚠️ OpenAI request failed:", e)
         return f"⚠️ OpenAI could not generate review. Diff as fallback:\n\n{diff_text}"
@@ -82,3 +78,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
