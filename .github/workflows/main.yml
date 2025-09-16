@@ -7,19 +7,17 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  id-token: write   # ✅ Needed for Azure OIDC login
 
 jobs:
   code-review:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Checkout code (no submodules to avoid errors)
+      # Step 1: Checkout repo
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: false
 
       # Step 2: Generate git diff
       - name: Generate diff
@@ -37,25 +35,23 @@ jobs:
           python-version: "3.11"
 
       # Step 4: Install dependencies
-      - name: Install requirements
+      - name: Install Python dependencies
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install openai PyGithub azure-identity
 
-      # Step 5: Azure login (so DefaultAzureCredential works)
+      # Step 5: Azure Login (needed for DefaultAzureCredential)
       - name: Azure Login
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       # Step 6: Run PR review script
       - name: Run OpenAI Review Script
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: python ci_script.py
 
 
