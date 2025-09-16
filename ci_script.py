@@ -1,9 +1,9 @@
 import os
 import sys
 import asyncio
-import requests
-from openai import AsyncAzureOpenAI
 from github import Github, Auth
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from openai import AsyncAzureOpenAI
 
 # -----------------------------
 # Environment variables
@@ -28,31 +28,22 @@ if os.path.exists(DIFF_FILE):
         diff_content = f.read().strip() or diff_content
 
 # -----------------------------
-# Get runtime OpenAI token from internal service
+# Get Azure AD token provider
 # -----------------------------
-# Replace this URL with your actual runtime token endpoint
-RUNTIME_TOKEN_URL = "https://alpheya-internal-service.qwlth.dev/get-token"
-
-def get_runtime_token():
-    try:
-        resp = requests.get(RUNTIME_TOKEN_URL)
-        resp.raise_for_status()
-        return resp.json()["access_token"]
-    except Exception as e:
-        print(f"❌ Failed to fetch runtime token: {e}")
-        sys.exit(1)
+token_provider = get_bearer_token_provider(
+    DefaultAzureCredential(),
+    "https://cognitiveservices.azure.com/.default"
+)
 
 # -----------------------------
 # Call Azure OpenAI
 # -----------------------------
 async def get_openai_review(diff_text: str) -> str:
     try:
-        token = get_runtime_token()
-
         client = AsyncAzureOpenAI(
             azure_endpoint="https://alpheya-oai.qwlth.dev",
             api_version="2024-09-01-preview",
-            azure_ad_token_provider=lambda: token,  # supply token directly
+            azure_ad_token_provider=token_provider,
         )
 
         resp = await client.chat.completions.create(
