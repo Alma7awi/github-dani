@@ -11,13 +11,14 @@ permissions:
 jobs:
   code-review:
     runs-on: ubuntu-latest
-
     steps:
-      # Step 1: Checkout repo
+
+      # Step 1: Checkout code (disable submodules to avoid errors)
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
+          submodules: false
 
       # Step 2: Generate git diff
       - name: Generate diff
@@ -30,17 +31,17 @@ jobs:
 
       # Step 3: Setup Python
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: "3.11"
 
       # Step 4: Install dependencies
-      - name: Install Python dependencies
+      - name: Install requirements
         run: |
           python -m pip install --upgrade pip
           pip install openai PyGithub azure-identity
 
-      # Step 5: Azure Login (needed for DefaultAzureCredential)
+      # Step 5: Login to Azure using Service Principal
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -50,8 +51,7 @@ jobs:
       - name: Run OpenAI Review Script
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: python ci_script.py
-
 
