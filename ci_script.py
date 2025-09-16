@@ -19,41 +19,6 @@ if missing_vars:
     print(f"❌ ERROR: Missing required environment variables: {', '.join(missing_vars)}")
     sys.exit(1)
 
-# -----------------------------
-# Read git diff
-# -----------------------------
-diff_content = "No changes detected."
-if os.path.exists(DIFF_FILE):
-    with open(DIFF_FILE, "r") as f:
-        diff_content = f.read().strip() or diff_content
-
-# -----------------------------
-# Azure OpenAI client
-# -----------------------------
-token_provider = get_bearer_token_provider(
-    DefaultAzureCredential(),
-    "https://cognitiveservices.azure.com/.default"
-)
-
-async def get_openai_review(diff_text: str) -> str:
-    try:
-        client = AsyncAzureOpenAI(
-            azure_endpoint="https://alpheya-oai.qwlth.dev",
-            api_version="2024-09-01-preview",
-            azure_ad_token_provider=token_provider,
-        )
-
-        resp = await client.chat.completions.create(
-            model="gpt-4o-2024-08-06",
-            messages=[
-                {"role": "system", "content": "You are a senior software engineer reviewing code changes."},
-                {"role": "user", "content": f"Please review this git diff and provide concise PR comments:\n\n{diff_text}"}
-            ],
-            temperature=0.7,
-            max_tokens=700,
-        )
-
-        return resp.choices[0].message.content.strip() or "⚠️ OpenAI returned an empty review."
     except Exception as e:
         print("⚠️ OpenAI request failed:", e)
         return f"⚠️ OpenAI could not generate review. Diff as fallback:\n\n{diff_text}"
