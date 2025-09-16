@@ -4,7 +4,7 @@ import asyncio
 from openai import AsyncAzureOpenAI
 from github import Github, Auth
 
-# -----------------------------
+# ---------------------------
 # Environment variables
 # -----------------------------
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
