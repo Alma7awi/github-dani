@@ -1,7 +1,6 @@
 import os
 import sys
 import asyncio
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from openai import AsyncAzureOpenAI
 from github import Github, Auth
 
@@ -13,8 +12,11 @@ PR_NUMBER = os.environ.get("PR_NUMBER")
 REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
 DIFF_FILE = "diff.txt"
 
+# Optional: OpenAI token (from your runtime service)
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+
 # Check required env vars
-missing_vars = [v for v in ["GITHUB_TOKEN", "PR_NUMBER", "GITHUB_REPOSITORY"] if not os.environ.get(v)]
+missing_vars = [v for v in ["GITHUB_TOKEN", "PR_NUMBER", "GITHUB_REPOSITORY", "OPENAI_API_KEY"] if not os.environ.get(v)]
 if missing_vars:
     print(f"❌ ERROR: Missing required environment variables: {', '.join(missing_vars)}")
     sys.exit(1)
@@ -28,22 +30,14 @@ if os.path.exists(DIFF_FILE):
         diff_content = f.read().strip() or diff_content
 
 # -----------------------------
-# Get runtime token from Azure
-# -----------------------------
-token_provider = get_bearer_token_provider(
-    DefaultAzureCredential(),
-    "https://cognitiveservices.azure.com/.default"
-)
-
-# -----------------------------
-# Call Azure OpenAI
+# Call OpenAI
 # -----------------------------
 async def get_openai_review(diff_text: str) -> str:
     try:
         client = AsyncAzureOpenAI(
             azure_endpoint="https://alpheya-oai.qwlth.dev",
             api_version="2024-09-01-preview",
-            azure_ad_token_provider=token_provider,
+            azure_ad_token_provider=None  # Using runtime API key
         )
 
         resp = await client.chat.completions.create(
