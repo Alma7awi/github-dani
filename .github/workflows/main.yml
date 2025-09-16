@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
 
-      # Step 1: Checkout code (disable submodules to avoid errors)
+      # Step 1: Checkout code (no submodules to avoid errors)
       - name: Checkout code
         uses: actions/checkout@v3
         with:
@@ -41,13 +41,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install openai PyGithub azure-identity
 
-      # Step 5: Login to Azure using Service Principal
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      # Step 6: Run PR review script
+      # Step 5: Run PR review script
       - name: Run OpenAI Review Script
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
