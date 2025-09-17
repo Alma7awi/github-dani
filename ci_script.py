@@ -37,7 +37,7 @@ token_provider = get_bearer_token_provider(
 
 # -----------------------------
 # Call Azure OpenAI
-# -----------------------------
+# ----------------------------
 async def get_openai_review(diff_text: str) -> str:
     try:
         client = AsyncAzureOpenAI(
