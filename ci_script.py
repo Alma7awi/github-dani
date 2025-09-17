@@ -37,15 +37,38 @@ client = AsyncAzureOpenAI(
 # -----------------------------
 if not os.path.exists("diff.txt") or os.path.getsize("diff.txt") == 0:
     print("⚠️ diff.txt not found or empty. Skipping OpenAI review.")
-    diff = ""
+    review_comment = "No diff found."
 else:
     with open("diff.txt", "r") as f:
         diff = f.read()
 
 # -----------------------------
-# System prompt
+# Helper to map code lines to diff positions
 # -----------------------------
-SYSTEM_PROMPT = """
+def get_diff_positions(file_diff, search_terms):
+    """Return list of (line_text, position) tuples for lines that match search_terms."""
+    positions = []
+    lines = file_diff.split("\n")
+    for i, line in enumerate(lines, start=1):
+        for term in search_terms:
+            if term in line:
+                positions.append((line.strip(), i))
+    return positions
+
+# -----------------------------
+# Generate review comments using Azure OpenAI
+# -----------------------------
+async def generate_line_comments():
+    if not diff:
+        return []
+
+    # For example, we can search for risky patterns (you can use OpenAI too)
+    search_terms = ["netFlow[0]", "startBalance"]
+    lines_to_comment = get_diff_positions(diff, search_terms)
+
+    comments = []
+    for line_text, diff_pos in lines_to_comment:
+        SYSTEM_PROMPT = """
 You are a senior software engineer reviewing code changes in a pull request.
 Focus on:
 1. Code readability and style
@@ -53,42 +76,44 @@ Focus on:
 3. Best practices
 4. Security considerations
 5. Suggestions for improvement
-
-Provide concise, actionable comments in bullet points.
+Provide concise comments for this line only.
 """
+        resp = await client.chat.completions.create(
+            model="gpt-4o-2024-08-06",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": f"Review this code line and suggest improvements:\n{line_text}"}
+            ],
+            temperature=0.7,
+        )
+        comment_text = resp.choices[0].message.content.strip()
+        comments.append((diff_pos, comment_text))
+    return comments
 
 # -----------------------------
-# Generate review using Azure OpenAI
-# -----------------------------
-async def get_review():
-    if not diff:
-        return "No diff to review."
-
-    resp = await client.chat.completions.create(
-        model="gpt-4o-2024-08-06",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Please review this git diff and provide concise PR comments:\n\n{diff}"}
-        ],
-        temperature=0.7
-    )
-
-    # Get the response text
-    return resp.choices[0].message["content"].strip()
-
-# -----------------------------
-# Post comment to GitHub PR
+# Post comments inline in PR
 # -----------------------------
 async def main():
-    review_comment = await get_review()
-    try:
-        pr.create_issue_comment(review_comment)
-        print("✅ Comment posted successfully")
-    except Exception as e:
-        print("❌ Failed to post comment:", e)
-        with open("review_comment.txt", "w") as f:
-            f.write(review_comment)
-        print("💾 Saved review_comment.txt instead")
+    comments = await generate_line_comments()
+    if not comments:
+        print("No line-level comments generated.")
+        return
+
+    for diff_pos, comment_text in comments:
+        try:
+            pr.create_review_comment(
+                body=comment_text,
+                commit_id=pr.head.sha,
+                path="api/src/use-case/queries/get-insights/mwrr/helpers/calculate-mwrr-from-transactions.ts",
+                line=diff_pos,
+                side="RIGHT"
+            )
+            print(f"✅ Comment posted at diff line {diff_pos}")
+        except Exception as e:
+            print("❌ Failed to post comment:", e)
+            with open("review_comment.txt", "w") as f:
+                f.write(comment_text)
+            print("💾 Saved review_comment.txt instead")
 
 if __name__ == "__main__":
     asyncio.run(main())
