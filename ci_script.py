@@ -37,28 +37,44 @@ client = AsyncAzureOpenAI(
 # -----------------------------
 if not os.path.exists("diff.txt") or os.path.getsize("diff.txt") == 0:
     print("⚠️ diff.txt not found or empty. Skipping OpenAI review.")
-    review_comment = "No diff found."
+    diff = ""
 else:
     with open("diff.txt", "r") as f:
         diff = f.read()
 
 # -----------------------------
+# System prompt
+# -----------------------------
+SYSTEM_PROMPT = """
+You are a senior software engineer reviewing code changes in a pull request.
+Focus on:
+1. Code readability and style
+2. Possible bugs or errors
+3. Best practices
+4. Security considerations
+5. Suggestions for improvement
+
+Provide concise, actionable comments in bullet points.
+"""
+
+# -----------------------------
 # Generate review using Azure OpenAI
 # -----------------------------
 async def get_review():
-    if os.path.exists("diff.txt") and os.path.getsize("diff.txt") > 0:
-        res = await client.chat.completions.create(
-            model="gpt-4o-2024-08-06",
-            messages=[
-                 {"role": "system", "content": "You are a helpful, friendly software engineer providing detailed and constructive code review comments."},
-                 {"role": "user", "content": f"Please review this git diff and provide concise PR comments:\n\n{diff}"}
-                ]
+    if not diff:
+        return "No diff to review."
 
-            ],
-            temperature=0.7
-        )
-        return res.choices[0].message.content.strip()
-    return "No diff to review."
+    resp = await client.chat.completions.create(
+        model="gpt-4o-2024-08-06",
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Please review this git diff and provide concise PR comments:\n\n{diff}"}
+        ],
+        temperature=0.7
+    )
+
+    # Get the response text
+    return resp.choices[0].message["content"].strip()
 
 # -----------------------------
 # Post comment to GitHub PR
@@ -76,5 +92,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
