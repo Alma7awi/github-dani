@@ -50,8 +50,10 @@ async def get_review():
         res = await client.chat.completions.create(
             model="gpt-4o-2024-08-06",
             messages=[
-                {"role": "system", "content": "You are a senior software engineer reviewing code changes."},
-                {"role": "user", "content": f"Please review this git diff and provide concise PR comments:\n\n{diff}"}
+                 {"role": "system", "content": "You are a helpful, friendly software engineer providing detailed and constructive code review comments."},
+                 {"role": "user", "content": f"Please review this git diff and provide concise PR comments:\n\n{diff}"}
+                ]
+
             ],
             temperature=0.7
         )
