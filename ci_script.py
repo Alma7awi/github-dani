@@ -1,127 +1,100 @@
 import os
 import asyncio
-from github import Github
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from github import Github, Auth
 from openai import AsyncOpenAI
+
+# -----------------------------
+# Config
+# -----------------------------
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+GITHUB_REPO = os.environ.get("GITHUB_REPOSITORY")
+PR_NUMBER = int(os.environ.get("PR_NUMBER", 1))
+OPENAI_KEY = os.environ.get("OPENAI_API_KEY")
+
+if not all([GITHUB_TOKEN, GITHUB_REPO, OPENAI_KEY]):
+    raise EnvironmentError("Please set GITHUB_TOKEN, GITHUB_REPOSITORY, and OPENAI_API_KEY")
 
 # -----------------------------
 # GitHub setup
 # -----------------------------
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-GITHUB_REPO = os.environ.get("GITHUB_REPOSITORY")  # e.g., 'username/repo'
-PR_NUMBER = int(os.environ.get("PR_NUMBER", 1))
-
-if not GITHUB_TOKEN:
-    raise EnvironmentError("⚠️ GITHUB_TOKEN not set")
-
-gh = Github(GITHUB_TOKEN)
+gh = Github(auth=Auth.Token(GITHUB_TOKEN))
 repo = gh.get_repo(GITHUB_REPO)
 pr = repo.get_pull(PR_NUMBER)
 
 # -----------------------------
-# Azure OpenAI setup
+# OpenAI setup
 # -----------------------------
-token_provider = get_bearer_token_provider(
-    DefaultAzureCredential(),
-    "https://cognitiveservices.azure.com/.default"
-)
-
-client = AsyncOpenAI(
-    api_version="2024-09-01-preview",
-    azure_endpoint="https://alpheya-oai.qwlth.dev",
-    azure_ad_token_provider=token_provider,
-)
+client = AsyncOpenAI(api_key=OPENAI_KEY)
 
 # -----------------------------
 # Read diff
 # -----------------------------
-diff = ""
-if os.path.exists("diff.txt") and os.path.getsize("diff.txt") > 0:
-    with open("diff.txt", "r") as f:
-        diff = f.read()
-else:
-    print("⚠️ diff.txt not found or empty. Skipping OpenAI review.")
+if not os.path.exists("diff.txt") or os.path.getsize("diff.txt") == 0:
+    print("⚠️ diff.txt not found or empty. Skipping review.")
+    exit()
+
+with open("diff.txt") as f:
+    diff_text = f.read()
 
 # -----------------------------
-# Helper: map code lines
+# Helper: find lines to comment
 # -----------------------------
-def get_diff_positions(file_diff, search_terms):
-    """Return list of (line_text, position) tuples for lines that match search_terms."""
-    positions = []
-    lines = file_diff.split("\n")
+def find_lines_to_comment(diff, search_terms=None):
+    """Return a list of (line_number, line_text) for lines to comment."""
+    lines = diff.split("\n")
+    result = []
     for i, line in enumerate(lines, start=1):
-        for term in search_terms:
-            if term in line:
-                positions.append((line.strip(), i))
-    return positions
+        if search_terms:
+            if any(term in line for term in search_terms):
+                result.append((i, line.strip()))
+        else:
+            result.append((i, line.strip()))
+    return result
+
+# Example: risky patterns to flag
+search_terms = ["netFlow[0]", "startBalance"]
+
+lines_to_comment = find_lines_to_comment(diff_text, search_terms)
 
 # -----------------------------
-# Generate review comments using OpenAI
+# Generate GPT review for each line
 # -----------------------------
-async def generate_line_comments():
-    if not diff:
-        return []
-
-    search_terms = ["netFlow[0]", "startBalance"]  # Example triggers
-    lines_to_comment = get_diff_positions(diff, search_terms)
-
-    comments = []
-    for line_text, diff_pos in lines_to_comment:
-        SYSTEM_PROMPT = """
-You are a senior software engineer reviewing code changes in a pull request.
-Focus on:
-1. Code readability and style
-2. Possible bugs or errors
-3. Best practices
-4. Security considerations
-5. Suggestions for improvement
-Provide concise comments for this line only.
+async def generate_line_comment(line_text):
+    SYSTEM_PROMPT = """
+You are a senior software engineer reviewing code changes.
+Focus on readability, bugs, best practices, security, and improvements.
+Provide a concise comment for this single line of code.
 """
-        resp = await client.chat.completions.create(
-            model="gpt-4o-2024-08-06",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Review this code line and suggest improvements:\n{line_text}"}
-            ],
-            temperature=0.7,
-        )
-        comment_text = resp.choices[0].message.content.strip()
-        comments.append((diff_pos, comment_text))
-    return comments
+    resp = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Review this line:\n{line_text}"}
+        ],
+        temperature=0.7
+    )
+    return resp.choices[0].message.content.strip()
 
 # -----------------------------
-# Post comments inline in PR
+# Post comments to PR
 # -----------------------------
 async def main():
-    comments = await generate_line_comments()
-    if not comments:
-        print("No line-level comments generated.")
-        return
-
-    files = pr.get_files()
-    target_file = None
-    if files.totalCount > 0:
-        target_file = files[0].filename  # just pick first changed file
-    else:
-        print("⚠️ No changed files found in PR.")
-        return
-
-    for diff_pos, comment_text in comments:
+    for diff_line_number, line_text in lines_to_comment:
+        comment_text = await generate_line_comment(line_text)
         try:
             pr.create_review_comment(
                 body=comment_text,
                 commit_id=pr.head.sha,
-                path=target_file,
-                position=diff_pos,   # must be relative position in diff
+                path="api/src/use-case/queries/get-insights/mwrr/helpers/calculate-mwrr-from-transactions.ts",
+                line=diff_line_number,
+                side="RIGHT"
             )
-            print(f"✅ Comment posted at {target_file}:{diff_pos}")
+            print(f"✅ Comment posted at diff line {diff_line_number}")
         except Exception as e:
-            print(f"❌ Inline failed at {diff_pos}: {e}")
-            # Fallback: post a general PR comment instead
-            pr.create_issue_comment(f"[Line {diff_pos}] {comment_text}")
-            print("💬 Posted as general PR comment")
+            print(f"❌ Failed to post comment at line {diff_line_number}: {e}")
+            with open("review_comment.txt", "a") as f:
+                f.write(f"Line {diff_line_number}: {comment_text}\n")
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 
