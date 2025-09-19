@@ -2,17 +2,17 @@ import os
 import asyncio
 from github import Github
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-from azure.ai.openai.aio import AsyncAzureOpenAI
+from openai import AsyncOpenAI
 
 # -----------------------------
 # GitHub setup
 # -----------------------------
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 GITHUB_REPO = os.environ.get("GITHUB_REPOSITORY")  # e.g., 'username/repo'
-PR_NUMBER = int(os.environ.get("PR_NUMBER", 1))    # default PR number = 1
+PR_NUMBER = int(os.environ.get("PR_NUMBER", 1))
 
 if not GITHUB_TOKEN:
-    raise EnvironmentError("GITHUB_TOKEN not set")
+    raise EnvironmentError("⚠️ GITHUB_TOKEN not set")
 
 gh = Github(GITHUB_TOKEN)
 repo = gh.get_repo(GITHUB_REPO)
@@ -26,24 +26,24 @@ token_provider = get_bearer_token_provider(
     "https://cognitiveservices.azure.com/.default"
 )
 
-client = AsyncAzureOpenAI(
-    azure_endpoint="https://alpheya-oai.qwlth.dev",
+client = AsyncOpenAI(
     api_version="2024-09-01-preview",
+    azure_endpoint="https://alpheya-oai.qwlth.dev",
     azure_ad_token_provider=token_provider,
 )
 
 # -----------------------------
 # Read diff
 # -----------------------------
-if not os.path.exists("diff.txt") or os.path.getsize("diff.txt") == 0:
-    print("⚠️ diff.txt not found or empty. Skipping OpenAI review.")
-    review_comment = "No diff found."
-else:
+diff = ""
+if os.path.exists("diff.txt") and os.path.getsize("diff.txt") > 0:
     with open("diff.txt", "r") as f:
         diff = f.read()
+else:
+    print("⚠️ diff.txt not found or empty. Skipping OpenAI review.")
 
 # -----------------------------
-# Helper to map code lines to diff positions
+# Helper: map code lines
 # -----------------------------
 def get_diff_positions(file_diff, search_terms):
     """Return list of (line_text, position) tuples for lines that match search_terms."""
@@ -56,14 +56,13 @@ def get_diff_positions(file_diff, search_terms):
     return positions
 
 # -----------------------------
-# Generate review comments using Azure OpenAI
+# Generate review comments using OpenAI
 # -----------------------------
 async def generate_line_comments():
     if not diff:
         return []
 
-    # For example, we can search for risky patterns (you can use OpenAI too)
-    search_terms = ["netFlow[0]", "startBalance"]
+    search_terms = ["netFlow[0]", "startBalance"]  # Example triggers
     lines_to_comment = get_diff_positions(diff, search_terms)
 
     comments = []
@@ -99,24 +98,30 @@ async def main():
         print("No line-level comments generated.")
         return
 
+    files = pr.get_files()
+    target_file = None
+    if files.totalCount > 0:
+        target_file = files[0].filename  # just pick first changed file
+    else:
+        print("⚠️ No changed files found in PR.")
+        return
+
     for diff_pos, comment_text in comments:
         try:
             pr.create_review_comment(
                 body=comment_text,
                 commit_id=pr.head.sha,
-                path="api/src/use-case/queries/get-insights/mwrr/helpers/calculate-mwrr-from-transactions.ts",
-                line=diff_pos,
-                side="RIGHT"
+                path=target_file,
+                position=diff_pos,   # must be relative position in diff
             )
-            print(f"✅ Comment posted at diff line {diff_pos}")
+            print(f"✅ Comment posted at {target_file}:{diff_pos}")
         except Exception as e:
-            print("❌ Failed to post comment:", e)
-            with open("review_comment.txt", "w") as f:
-                f.write(comment_text)
-            print("💾 Saved review_comment.txt instead")
+            print(f"❌ Inline failed at {diff_pos}: {e}")
+            # Fallback: post a general PR comment instead
+            pr.create_issue_comment(f"[Line {diff_pos}] {comment_text}")
+            print("💬 Posted as general PR comment")
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 
 
