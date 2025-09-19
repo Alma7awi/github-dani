@@ -1,84 +1,100 @@
 import os
-import sys
 import asyncio
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-from openai import AsyncAzureOpenAI
 from github import Github, Auth
+from openai import AsyncOpenAI
 
 # -----------------------------
-# Environment variables
+# Config
 # -----------------------------
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-PR_NUMBER = os.environ.get("PR_NUMBER")
-REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
-DIFF_FILE = "diff.txt"
+GITHUB_REPO = os.environ.get("GITHUB_REPOSITORY")
+PR_NUMBER = int(os.environ.get("PR_NUMBER", 1))
+OPENAI_KEY = os.environ.get("OPENAI_API_KEY")
 
-# Check required env vars
-missing_vars = [v for v in ["GITHUB_TOKEN", "PR_NUMBER", "GITHUB_REPOSITORY"] if not os.environ.get(v)]
-if missing_vars:
-    print(f"❌ ERROR: Missing required environment variables: {', '.join(missing_vars)}")
-    sys.exit(1)
+if not all([GITHUB_TOKEN, GITHUB_REPO, OPENAI_KEY]):
+    raise EnvironmentError("Please set GITHUB_TOKEN, GITHUB_REPOSITORY, and OPENAI_API_KEY")
 
 # -----------------------------
-# Read git diff
+# GitHub setup
 # -----------------------------
-diff_content = "No changes detected."
-if os.path.exists(DIFF_FILE):
-    with open(DIFF_FILE, "r") as f:
-        diff_content = f.read().strip() or diff_content
+gh = Github(auth=Auth.Token(GITHUB_TOKEN))
+repo = gh.get_repo(GITHUB_REPO)
+pr = repo.get_pull(PR_NUMBER)
 
 # -----------------------------
-# Get runtime token from Azure
+# OpenAI setup
 # -----------------------------
-token_provider = get_bearer_token_provider(
-    DefaultAzureCredential(),
-    "https://cognitiveservices.azure.com/.default"
-)
+client = AsyncOpenAI(api_key=OPENAI_KEY)
 
 # -----------------------------
-# Call Azure OpenAI
+# Read diff
 # -----------------------------
-async def get_openai_review(diff_text: str) -> str:
-    try:
-        client = AsyncAzureOpenAI(
-            azure_endpoint="https://alpheya-oai.qwlth.dev",
-            api_version="2024-09-01-preview",
-            azure_ad_token_provider=token_provider,
-        )
+if not os.path.exists("diff.txt") or os.path.getsize("diff.txt") == 0:
+    print("⚠️ diff.txt not found or empty. Skipping review.")
+    exit()
 
-        resp = await client.chat.completions.create(
-            model="gpt-4o-2024-08-06",
-            messages=[
-                {"role": "system", "content": "You are a senior software engineer reviewing code changes."},
-                {"role": "user", "content": f"Please review this git diff and provide concise PR comments:\n\n{diff_text}"}
-            ],
-            temperature=0.7,
-            max_tokens=700,
-        )
-
-        return resp.choices[0].message.content.strip() or "⚠️ OpenAI returned an empty review."
-
-    except Exception as e:
-        print("⚠️ OpenAI request failed:", e)
-        return f"⚠️ OpenAI could not generate review. Diff as fallback:\n\n{diff_text}"
+with open("diff.txt") as f:
+    diff_text = f.read()
 
 # -----------------------------
-# Post review to PR
+# Helper: find lines to comment
+# -----------------------------
+def find_lines_to_comment(diff, search_terms=None):
+    """Return a list of (line_number, line_text) for lines to comment."""
+    lines = diff.split("\n")
+    result = []
+    for i, line in enumerate(lines, start=1):
+        if search_terms:
+            if any(term in line for term in search_terms):
+                result.append((i, line.strip()))
+        else:
+            result.append((i, line.strip()))
+    return result
+
+# Example: risky patterns to flag
+search_terms = ["netFlow[0]", "startBalance"]
+
+lines_to_comment = find_lines_to_comment(diff_text, search_terms)
+
+# -----------------------------
+# Generate GPT review for each line
+# -----------------------------
+async def generate_line_comment(line_text):
+    SYSTEM_PROMPT = """
+You are a senior software engineer reviewing code changes.
+Focus on readability, bugs, best practices, security, and improvements.
+Provide a concise comment for this single line of code.
+"""
+    resp = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Review this line:\n{line_text}"}
+        ],
+        temperature=0.7
+    )
+    return resp.choices[0].message.content.strip()
+
+# -----------------------------
+# Post comments to PR
 # -----------------------------
 async def main():
-    review_comment = await get_openai_review(diff_content)
-
-    try:
-        g = Github(auth=Auth.Token(GITHUB_TOKEN))
-        repo = g.get_repo(REPO_NAME)
-        pr = repo.get_pull(int(PR_NUMBER))
-        pr.create_issue_comment(review_comment)
-        print(f"✅ Comment posted to PR #{PR_NUMBER}")
-    except Exception as e:
-        print(f"❌ Failed to post comment: {e}")
-        with open("review_comment.txt", "w") as f:
-            f.write(review_comment)
-        print("💾 Saved review_comment.txt instead")
+    for diff_line_number, line_text in lines_to_comment:
+        comment_text = await generate_line_comment(line_text)
+        try:
+            pr.create_review_comment(
+                body=comment_text,
+                commit_id=pr.head.sha,
+                path="api/src/use-case/queries/get-insights/mwrr/helpers/calculate-mwrr-from-transactions.ts",
+                line=diff_line_number,
+                side="RIGHT"
+            )
+            print(f"✅ Comment posted at diff line {diff_line_number}")
+        except Exception as e:
+            print(f"❌ Failed to post comment at line {diff_line_number}: {e}")
+            with open("review_comment.txt", "a") as f:
+                f.write(f"Line {diff_line_number}: {comment_text}\n")
 
 if __name__ == "__main__":
     asyncio.run(main())
+
