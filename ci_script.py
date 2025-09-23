@@ -1,90 +1,136 @@
 import os
 import sys
+import json
 import asyncio
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+import aiohttp
+from azure.identity.aio import DefaultAzureCredential
 from openai import AsyncAzureOpenAI
-from github import Github, Auth
 
-# -----------------------------
-# Env vars
-# -----------------------------
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-PR_NUMBER = os.environ.get("PR_NUMBER")
-REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
-DIFF_FILE = "diff.txt"
+# -------------------------------
+# Config & Environment Variables
+# -------------------------------
+GITHUB_REPOSITORY = os.getenv("GITHUB_REPOSITORY")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+PR_NUMBER = os.getenv("PR_NUMBER")
+COMMIT_ID = os.getenv("GITHUB_SHA")
+DIFF_FILE = "diff.patch"  # saved diff file in workflow
 
-if not GITHUB_TOKEN:
-    print("❌ ERROR: GITHUB_TOKEN not set.")
+if not all([GITHUB_REPOSITORY, GITHUB_TOKEN, PR_NUMBER, COMMIT_ID]):
+    print("❌ Missing required GitHub environment variables")
     sys.exit(1)
 
-# -----------------------------
-# Read diff
-# -----------------------------
-if not os.path.exists(DIFF_FILE):
-    print(f"⚠️ {DIFF_FILE} not found. Skipping OpenAI review.")
-    diff_content = ""
-else:
-    with open(DIFF_FILE, "r") as f:
-        diff_content = f.read()
+# -------------------------------
+# Azure OpenAI Setup
+# -------------------------------
+client = AsyncAzureOpenAI(
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+    api_version="2024-02-15-preview",
+    credential=DefaultAzureCredential()
+)
 
-if not diff_content.strip():
-    diff_content = "No changes detected."
+MODEL = "gpt-4o-mini"
 
-# -----------------------------
-# Azure OpenAI call
-# -----------------------------
-async def get_openai_review(diff_text: str) -> str:
+# -------------------------------
+# Helper: Call OpenAI for review
+# -------------------------------
+async def get_review(diff_text: str):
+    system_prompt = "You are a senior code reviewer."
+    
+    # 1. General PR Summary
+    summary_prompt = f"""
+Review the following pull request diff and provide a structured summary
+with strengths, risks, and improvements. Be concise and constructive.
+
+Diff:
+{diff_text}
+"""
+    summary_resp = await client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": summary_prompt},
+        ],
+        max_tokens=800,
+    )
+    summary = summary_resp.choices[0].message.content.strip()
+
+    # 2. Inline Comments (JSON format)
+    inline_prompt = f"""
+Review the following diff and suggest inline comments.
+Output ONLY valid JSON in the format:
+
+[
+  {{ "file": "path/to/file", "line": line_number, "comment": "feedback here" }}
+]
+
+Diff:
+{diff_text}
+"""
+    inline_resp = await client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {"role": "system", "content": "You are a precise code reviewer."},
+            {"role": "user", "content": inline_prompt},
+        ],
+        max_tokens=1200,
+    )
+    inline_text = inline_resp.choices[0].message.content.strip()
+
     try:
-        token_provider = get_bearer_token_provider(
-            DefaultAzureCredential(),
-            "https://cognitiveservices.azure.com/.default"
-        )
+        inline_comments = json.loads(inline_text)
+    except Exception:
+        inline_comments = []
+        print("⚠️ Failed to parse inline JSON, raw output:", inline_text)
 
-        client = AsyncAzureOpenAI(
-            azure_endpoint="https://alpheya-oai.qwlth.dev",
-            api_version="2024-09-01-preview",
-            azure_ad_token_provider=token_provider,
-        )
+    return summary, inline_comments
 
-        resp = await client.chat.completions.create(
-            model="gpt-4o-2024-08-06",
-            messages=[
-                {"role": "system", "content": "You are a senior software engineer reviewing code changes."},
-                {"role": "user", "content": f"Please review this git diff and provide concise PR comments:\n\n{diff_text}"}
-            ],
-            temperature=0.7,
-            max_tokens=700,
-        )
+# -------------------------------
+# Helper: Post comment to GitHub
+# -------------------------------
+async def post_summary_comment(session, summary: str):
+    url = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/issues/{PR_NUMBER}/comments"
+    headers = {"Authorization": f"Bearer {GITHUB_TOKEN}"}
+    payload = {"body": summary}
+    async with session.post(url, headers=headers, json=payload) as resp:
+        if resp.status != 201:
+            print("❌ Failed to post summary:", await resp.text())
 
-        comment_text = resp.choices[0].message.content.strip()
-        if not comment_text:
-            comment_text = "⚠️ OpenAI returned an empty review."
-        return comment_text
+async def post_inline_comment(session, comment: dict):
+    url = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/pulls/{PR_NUMBER}/comments"
+    headers = {"Authorization": f"Bearer {GITHUB_TOKEN}"}
+    payload = {
+        "body": comment["comment"],
+        "commit_id": COMMIT_ID,
+        "path": comment["file"],
+        "line": comment["line"],
+        "side": "RIGHT"
+    }
+    async with session.post(url, headers=headers, json=payload) as resp:
+        if resp.status not in [201, 200]:
+            print("❌ Failed inline comment:", await resp.text())
 
-    except Exception as e:
-        print("⚠️ OpenAI request failed:", e)
-        return f"⚠️ OpenAI could not generate review. Diff as fallback:\n\n{diff_text}"
-
-# -----------------------------
-# Main
-# -----------------------------
+# -------------------------------
+# Main Runner
+# -------------------------------
 async def main():
-    review_comment = await get_openai_review(diff_content)
+    if not os.path.exists(DIFF_FILE):
+        print(f"❌ Diff file {DIFF_FILE} not found")
+        sys.exit(1)
 
-    # ✅ Always try to post to PR
-    try:
-        g = Github(auth=Auth.Token(GITHUB_TOKEN))
-        repo = g.get_repo(REPO_NAME)
-        pr = repo.get_pull(int(PR_NUMBER))
-        pr.create_issue_comment(review_comment)
-        print(f"✅ Comment posted to PR #{PR_NUMBER}")
-    except Exception as e:
-        print(f"❌ Failed to post comment: {e}")
-        # fallback: write to file
-        with open("review_comment.txt", "w") as f:
-            f.write(review_comment)
-        print("💾 Saved review_comment.txt instead")
+    with open(DIFF_FILE, "r") as f:
+        diff_text = f.read()
+
+    summary, inline_comments = await get_review(diff_text)
+
+    async with aiohttp.ClientSession() as session:
+        # Post summary comment
+        await post_summary_comment(session, f"## 🤖 PR Review Bot\n\n{summary}")
+
+        # Post inline comments
+        for comment in inline_comments:
+            await post_inline_comment(session, comment)
+
+    print("✅ Review completed: summary + inline comments posted")
 
 if __name__ == "__main__":
     asyncio.run(main())
-
