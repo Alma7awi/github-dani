@@ -4,21 +4,25 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   review:
+    name: Run PR Review
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # fetch full history for diffs
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: 3.13
+          python-version: "3.13"
 
       - name: Install dependencies
         run: |
@@ -26,16 +30,19 @@ jobs:
           pip install PyGithub azure-identity azure-ai-openai
 
       - name: Generate diff
-        run: git fetch origin ${{ github.base_ref }} && git diff origin/${{ github.base_ref }}...HEAD > diff.txt || echo "No changes"
-
-      - name: Set environment variables
+        shell: bash
         run: |
-          echo "GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}" >> $GITHUB_ENV
-          echo "GITHUB_REPOSITORY=${{ github.repository }}" >> $GITHUB_ENV
-          echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_ENV
-          echo "AZURE_OPENAI_ENDPOINT=${{ secrets.AZURE_OPENAI_ENDPOINT }}" >> $GITHUB_ENV
-          echo "AZURE_OPENAI_API_KEY=${{ secrets.AZURE_OPENAI_API_KEY }}" >> $GITHUB_ENV
-          echo "AZURE_OPENAI_MODEL=${{ secrets.AZURE_OPENAI_MODEL }}" >> $GITHUB_ENV
+          TARGET_BRANCH="${{ github.base_ref }}"
+          git fetch origin "$TARGET_BRANCH"
+          git diff origin/"$TARGET_BRANCH"...HEAD > diff.txt || echo "No changes"
 
       - name: Run PR review script
-        run: python ci_script.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_KEY: ${{ secrets.AZURE_OPENAI_KEY }}
+        run: |
+          python ci_script.py
+
