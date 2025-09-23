@@ -1,118 +1,81 @@
-#!/usr/bin/env python3
-"""
-ci_script.py
-Refactored script to:
-- Generate diff for the PR
-- Send diff to Azure OpenAI for review
-- Post inline comments to the PR
-- Fallback to review_comment.txt if posting fails
-"""
-
 import os
 import asyncio
-from github import Github, GithubException
+from github import Github, Auth
+from azure.ai.openai.aio import OpenAIClient
+from azure.core.credentials import AzureKeyCredential
 
-try:
-    from azure.identity.aio import DefaultAzureCredential
-    from azure.ai.openai.aio import OpenAIClient
-except ImportError:
-    raise ImportError("Required packages missing. Run: pip install azure-identity azure-ai-openai PyGithub")
-
-# ------------------ ENVIRONMENT VARIABLES ------------------
+# -------------------------------
+# Environment variables
+# -------------------------------
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_REPOSITORY = os.getenv("GITHUB_REPOSITORY")
-PR_NUMBER = os.getenv("PR_NUMBER")
+PR_NUMBER = int(os.getenv("PR_NUMBER", "0"))
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
-AZURE_OPENAI_MODEL = os.getenv("AZURE_OPENAI_MODEL", "gpt-4")
-if not all([GITHUB_TOKEN, GITHUB_REPOSITORY, PR_NUMBER, AZURE_OPENAI_ENDPOINT]):
-    raise SystemExit("❌ Missing one or more required environment variables.")
+AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY")
 
-# ------------------ HELPER FUNCTIONS ------------------
-async def get_openai_review(diff_text: str) -> str:
-    """Send diff to Azure OpenAI and get review comments."""
-    credential = DefaultAzureCredential()
-    client = OpenAIClient(endpoint=AZURE_OPENAI_ENDPOINT, credential=credential)
-    prompt = f"Review this PR diff and provide line-by-line feedback:\n{diff_text}"
-    
+if not all([GITHUB_TOKEN, GITHUB_REPOSITORY, PR_NUMBER, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_KEY]):
+    raise ValueError("Missing one or more required environment variables")
+
+# -------------------------------
+# Async PR review function
+# -------------------------------
+async def run_review():
+    # Initialize GitHub client
+    gh = Github(auth=Auth.Token(GITHUB_TOKEN))
+    repo = gh.get_repo(GITHUB_REPOSITORY)
+    pr = repo.get_pull(PR_NUMBER)
+
+    # Read diff file
     try:
-        response = await client.chat_completions.create(
-            deployment_id=AZURE_OPENAI_MODEL,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        review_text = response.choices[0].message.content
-        return review_text
-    except Exception as e:
-        return f"❌ OpenAI review failed: {e}"
-    finally:
-        await client.close()
-        await credential.close()
-
-def parse_diff(diff_path="diff.txt"):
-    """Read diff file and map lines for inline commenting."""
-    if not os.path.exists(diff_path):
-        print("⚠️ Diff file not found, creating an empty one.")
-        return {}
+        with open("diff.txt", "r") as f:
+            diff_text = f.read()
+    except FileNotFoundError:
+        diff_text = ""
     
-    inline_map = {}  # {file_path: [(line_number, line_text), ...]}
-    current_file = None
-    line_number = 0
-    
-    with open(diff_path, "r") as f:
-        for line in f:
-            if line.startswith("+++ b/"):
-                current_file = line.strip().split(" ")[1][2:]
-                inline_map[current_file] = []
-                line_number = 0
-            elif current_file:
-                if line.startswith("+") and not line.startswith("+++"):
-                    line_number += 1
-                    inline_map[current_file].append((line_number, line[1:]))
-                elif not line.startswith("-"):
-                    line_number += 1
-    return inline_map
-
-async def post_inline_comments(github_token, repo_name, pr_number, review_text, inline_map):
-    """Post comments to GitHub PR inline if possible."""
-    g = Github(github_token)
-    repo = g.get_repo(repo_name)
-    pr = repo.get_pull(int(pr_number))
-
-    try:
-        for file_path, lines in inline_map.items():
-            for line_number, code_line in lines:
-                comment_body = f"💡 Suggested review: {review_text[:200]}..."  # Truncate if needed
-                pr.create_review_comment(
-                    body=comment_body,
-                    commit_id=pr.head.sha,
-                    path=file_path,
-                    position=line_number
-                )
-        print(f"✅ Inline comments posted to PR #{pr_number}")
-    except GithubException as e:
-        # Fallback to saving to file
-        print(f"⚠️ Failed to post inline comments: {e}")
-        with open("review_comment.txt", "w") as f:
-            f.write(review_text)
-        print("💾 Review saved to review_comment.txt")
-
-# ------------------ MAIN ------------------
-async def main():
-    print("🔹 Reading diff...")
-    inline_map = parse_diff()
-    if not inline_map:
-        print("⚠️ No diff content found.")
+    if not diff_text.strip():
+        print("No changes detected in PR.")
         return
 
-    with open("diff.txt", "r") as f:
-        diff_text = f.read()
+    # Initialize Azure OpenAI client
+    client = OpenAIClient(
+        AZURE_OPENAI_ENDPOINT,
+        credential=AzureKeyCredential(AZURE_OPENAI_KEY)
+    )
 
-    print("🔹 Sending diff to Azure OpenAI...")
-    review_text = await get_openai_review(diff_text)
+    # Prepare a simple prompt for code review
+    prompt = f"Please review the following code changes:\n\n{diff_text}"
 
-    print("🔹 Posting inline comments to PR...")
-    await asyncio.to_thread(post_inline_comments, GITHUB_TOKEN, GITHUB_REPOSITORY, PR_NUMBER, review_text, inline_map)
+    # Call Azure OpenAI asynchronously
+    response = await client.chat_completions.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}]
+    )
 
+    review_comment = response.choices[0].message.content
+
+    # -------------------------------
+    # Post comments to PR
+    # -------------------------------
+    try:
+        for line_number, line in enumerate(diff_text.splitlines(), start=1):
+            # Post review comment on PR using correct 'commit' argument
+            pr.create_review_comment(
+                body=line,  # or review_comment if posting full review
+                path=".github/workflows/main.yml",  # replace dynamically if needed
+                position=line_number,
+                commit=pr.head.sha
+            )
+        print("Comments posted successfully.")
+    except Exception as e:
+        print(f"❌ Failed to post comment: {e}")
+        # Fallback: save to file
+        with open("review_comment.txt", "w") as f:
+            f.write(review_comment)
+        print("Review saved to review_comment.txt")
+
+# -------------------------------
+# Run async main
+# -------------------------------
 if __name__ == "__main__":
-    asyncio.run(main())
-
+    asyncio.run(run_review())
 
