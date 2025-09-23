@@ -2,6 +2,7 @@ import os
 import asyncio
 from github import Github, Auth
 from openai import AsyncOpenAI
+from unidiff import PatchSet
 
 # -----------------------------
 # Config
@@ -14,85 +15,52 @@ OPENAI_KEY = os.environ.get("OPENAI_API_KEY")
 if not all([GITHUB_TOKEN, GITHUB_REPO, OPENAI_KEY, PR_NUMBER]):
     raise EnvironmentError("Missing one of: GITHUB_TOKEN, GITHUB_REPOSITORY, OPENAI_API_KEY, PR_NUMBER")
 
-# -----------------------------
-# GitHub setup
-# -----------------------------
 gh = Github(auth=Auth.Token(GITHUB_TOKEN))
 repo = gh.get_repo(GITHUB_REPO)
 pr = repo.get_pull(PR_NUMBER)
 
-# -----------------------------
-# OpenAI setup
-# -----------------------------
 client = AsyncOpenAI(api_key=OPENAI_KEY)
 
 # -----------------------------
-# Read diff
+# Read and parse diff
 # -----------------------------
-if not os.path.exists("diff.txt") or os.path.getsize("diff.txt") == 0:
-    print("⚠️ diff.txt not found or empty. Skipping review.")
-    exit()
-
 with open("diff.txt") as f:
-    diff_text = f.read()
+    patch = PatchSet(f)
 
 # -----------------------------
-# Helper: find lines to comment
+# GPT comment generator
 # -----------------------------
-def find_lines_to_comment(diff, search_terms=None):
-    lines = diff.split("\n")
-    result = []
-    for i, line in enumerate(lines, start=1):
-        if search_terms:
-            if any(term in line for term in search_terms):
-                result.append((i, line.strip()))
-        else:
-            result.append((i, line.strip()))
-    return result
-
-# Example: risky patterns to flag
-search_terms = ["netFlow[0]", "startBalance"]
-lines_to_comment = find_lines_to_comment(diff_text, search_terms)
-
-# -----------------------------
-# Generate GPT review for each line
-# -----------------------------
-async def generate_line_comment(line_text):
+async def review_chunk(file_path, hunk_text):
     SYSTEM_PROMPT = """
-You are a senior software engineer reviewing code changes.
-Focus on readability, bugs, best practices, security, and improvements.
-Provide a concise comment for this single line of code.
+You are a senior software engineer reviewing a Git diff.
+Focus on readability, bugs, best practices, and correctness.
+Write a concise review for this diff hunk.
 """
     resp = await client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Review this line:\n{line_text}"}
+            {"role": "user", "content": f"Review this diff:\n{hunk_text}"}
         ],
         temperature=0.7
     )
     return resp.choices[0].message.content.strip()
 
 # -----------------------------
-# Post comments to PR
+# Main
 # -----------------------------
 async def main():
-    tasks = [generate_line_comment(line) for _, line in lines_to_comment]
-    comments = await asyncio.gather(*tasks)
+    for patched_file in patch:
+        print(f"\n{patched_file.path}\nViewed\n")
+        for hunk in patched_file:
+            # Show raw diff chunk
+            hunk_text = "".join(str(line) for line in hunk)
+            print(hunk.section_header)
+            print(hunk_text)
 
-    for (diff_line_number, line_text), comment_text in zip(lines_to_comment, comments):
-        try:
-            pr.create_review_comment(
-                body=comment_text,
-                commit_id=pr.head.sha,
-                path="api/src/use-case/queries/get-insights/mwrr/helpers/calculate-mwrr-from-transactions.ts",
-                position=diff_line_number
-            )
-            print(f"✅ Comment posted at diff line {diff_line_number}")
-        except Exception as e:
-            print(f"❌ Failed to post comment at line {diff_line_number}: {e}")
-            with open("review_comment.txt", "a") as f:
-                f.write(f"Line {diff_line_number}: {comment_text}\n")
+            # Ask GPT for review
+            comment = await review_chunk(patched_file.path, hunk_text)
+            print(f"\n💡 GPT Review:\n{comment}\n")
 
 if __name__ == "__main__":
     asyncio.run(main())
