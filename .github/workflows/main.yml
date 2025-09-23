@@ -9,45 +9,39 @@ permissions:
   pull-requests: write
 
 jobs:
-  code-review:
+  review:
+    name: Run PR Review
     runs-on: ubuntu-latest
-    steps:
 
-      # Step 1: Checkout code
+    steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0
-          submodules: false
+          fetch-depth: 0  # fetch full history for diffs
 
-      # Step 2: Generate git diff
-      - name: Generate diff
-        run: |
-          TARGET_BRANCH=${{ github.base_ref }}
-          git fetch origin $TARGET_BRANCH
-          git diff origin/$TARGET_BRANCH...HEAD > diff.txt || echo "No changes"
-          echo "Diff file created with size:"
-          wc -l diff.txt
-
-      # Step 3: Setup Python
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
-      # Step 4: Install dependencies
-      - name: Install requirements
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install openai PyGithub azure-identity
+          pip install PyGithub azure-identity
 
-      # Step 5: Run PR review script
-      - name: Run OpenAI Review Script
+      - name: Generate diff
+        shell: bash
+        run: |
+          TARGET_BRANCH="${{ github.base_ref }}"
+          git fetch origin "$TARGET_BRANCH"
+          git diff origin/"$TARGET_BRANCH"...HEAD > diff.txt || echo "No changes"
+
+      - name: Run PR review script
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: python ci_script.py
-
-
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_KEY: ${{ secrets.AZURE_OPENAI_KEY }}
+        run: |
+          python ci_script.py
