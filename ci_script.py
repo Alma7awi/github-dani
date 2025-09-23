@@ -2,42 +2,33 @@
 import os
 import asyncio
 from github import Github, Auth
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-from azure.ai.openai.aio import AsyncAzureOpenAI
+from openai import AsyncOpenAI
 
 # -----------------------------
-# Config / Environment
+# Config
 # -----------------------------
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-GITHUB_REPO = os.environ.get("GITHUB_REPOSITORY")
+GITHUB_REPOSITORY = os.environ.get("GITHUB_REPOSITORY")
 PR_NUMBER = int(os.environ.get("PR_NUMBER", 1))
+OPENAI_KEY = os.environ.get("OPENAI_API_KEY")
 
-if not all([GITHUB_TOKEN, GITHUB_REPO]):
-    raise EnvironmentError("GITHUB_TOKEN and GITHUB_REPOSITORY must be set")
+if not all([GITHUB_TOKEN, GITHUB_REPOSITORY, OPENAI_KEY]):
+    raise EnvironmentError("Please set GITHUB_TOKEN, GITHUB_REPOSITORY, and OPENAI_API_KEY")
 
 # -----------------------------
-# GitHub Setup
+# GitHub setup
 # -----------------------------
 gh = Github(auth=Auth.Token(GITHUB_TOKEN))
-repo = gh.get_repo(GITHUB_REPO)
+repo = gh.get_repo(GITHUB_REPOSITORY)
 pr = repo.get_pull(PR_NUMBER)
 
 # -----------------------------
-# Azure OpenAI Setup
+# OpenAI setup
 # -----------------------------
-token_provider = get_bearer_token_provider(
-    DefaultAzureCredential(),
-    "https://cognitiveservices.azure.com/.default"
-)
-
-client = AsyncAzureOpenAI(
-    azure_endpoint="https://your-azure-endpoint",
-    api_version="2024-09-01-preview",
-    azure_ad_token_provider=token_provider,
-)
+client = AsyncOpenAI(api_key=OPENAI_KEY)
 
 # -----------------------------
-# Helper: Generate review comment for a line
+# Helper: generate review comment per line
 # -----------------------------
 async def generate_line_comment(line_text: str) -> str:
     SYSTEM_PROMPT = """
@@ -56,32 +47,64 @@ Provide a concise comment for this single line of code.
     return resp.choices[0].message.content.strip()
 
 # -----------------------------
-# Main: Post inline comments
+# Helper: extract lines to comment from diff
+# -----------------------------
+def parse_diff(diff_text: str):
+    """
+    Parses a Git diff and returns a list of (file_path, diff_position, line_text)
+    suitable for GitHub inline comments.
+    """
+    comments = []
+    current_file = None
+    diff_position = 0
+
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git"):
+            current_file = None
+            diff_position = 0
+        elif line.startswith("+++ b/"):
+            current_file = line[6:]  # filepath after "+++ b/"
+            diff_position = 0
+        elif current_file and (line.startswith("+") and not line.startswith("+++")):
+            diff_position += 1
+            comments.append((current_file, diff_position, line[1:].strip()))
+        elif current_file and (not line.startswith("-")):
+            diff_position += 1
+
+    return comments
+
+# -----------------------------
+# Main async function
 # -----------------------------
 async def main():
-    files = pr.get_files()
-    for file in files:
-        if not file.patch:
-            continue
+    # Make sure diff.txt exists
+    if not os.path.exists("diff.txt") or os.path.getsize("diff.txt") == 0:
+        print("⚠️ diff.txt not found or empty. Skipping review.")
+        return
 
-        lines = file.patch.split("\n")
-        for idx, line in enumerate(lines):
-            # Example: flag risky terms
-            if any(term in line for term in ["netFlow[0]", "startBalance"]):
-                comment_text = await generate_line_comment(line)
-                try:
-                    pr.create_review_comment(
-                        body=comment_text,
-                        commit_id=pr.head.sha,
-                        path=file.filename,
-                        position=idx + 1,  # GitHub diff position
-                    )
-                    print(f"✅ Comment posted: {file.filename} line {idx+1}")
-                except Exception as e:
-                    print(f"❌ Failed to post comment: {e}")
-                    with open("review_comment.txt", "a") as f:
-                        f.write(f"{file.filename} line {idx+1}: {comment_text}\n")
+    with open("diff.txt") as f:
+        diff_text = f.read()
 
+    lines_to_comment = parse_diff(diff_text)
+
+    for file_path, diff_position, line_text in lines_to_comment:
+        comment_text = await generate_line_comment(line_text)
+        try:
+            pr.create_review_comment(
+                body=comment_text,
+                commit_id=pr.head.sha,
+                path=file_path,
+                position=diff_position
+            )
+            print(f"✅ Comment posted on {file_path} at position {diff_position}")
+        except Exception as e:
+            print(f"❌ Failed to post comment on {file_path} at position {diff_position}: {e}")
+            with open("review_comment.txt", "a") as f:
+                f.write(f"{file_path} [{diff_position}]: {comment_text}\n")
+
+# -----------------------------
+# Run
+# -----------------------------
 if __name__ == "__main__":
     asyncio.run(main())
 
