@@ -1,71 +1,87 @@
+#!/usr/bin/env python3
 import os
-import requests
-import subprocess
-import json
-from openai import OpenAI
+import asyncio
+from github import Github, Auth
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from azure.ai.openai.aio import AsyncAzureOpenAI
 
-# --- Setup ---
-token = os.getenv("GITHUB_TOKEN")
-repo = os.getenv("GITHUB_REPOSITORY")
-pr_number = os.getenv("PR_NUMBER")
-commit_id = os.getenv("GITHUB_SHA")
+# -----------------------------
+# Config / Environment
+# -----------------------------
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+GITHUB_REPO = os.environ.get("GITHUB_REPOSITORY")
+PR_NUMBER = int(os.environ.get("PR_NUMBER", 1))
 
-headers = {
-    "Authorization": f"token {token}",
-    "Accept": "application/vnd.github+json"
-}
+if not all([GITHUB_TOKEN, GITHUB_REPO]):
+    raise EnvironmentError("GITHUB_TOKEN and GITHUB_REPOSITORY must be set")
 
-# --- Step 1: Get PR diff ---
-diff = subprocess.check_output(
-    ["git", "diff", "origin/main...HEAD"], text=True
+# -----------------------------
+# GitHub Setup
+# -----------------------------
+gh = Github(auth=Auth.Token(GITHUB_TOKEN))
+repo = gh.get_repo(GITHUB_REPO)
+pr = repo.get_pull(PR_NUMBER)
+
+# -----------------------------
+# Azure OpenAI Setup
+# -----------------------------
+token_provider = get_bearer_token_provider(
+    DefaultAzureCredential(),
+    "https://cognitiveservices.azure.com/.default"
 )
 
-# --- Step 2: Ask OpenAI to generate inline review comments ---
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = AsyncAzureOpenAI(
+    azure_endpoint="https://your-azure-endpoint",
+    api_version="2024-09-01-preview",
+    azure_ad_token_provider=token_provider,
+)
 
-prompt = f"""
-You are a code reviewer. Review the following diff and suggest inline comments. 
-Output ONLY valid JSON in the following format:
-
-[
-  {{"file": "filename", "line": line_number, "comment": "Your review text"}},
-  ...
-]
-
-Diff:
-{diff}
+# -----------------------------
+# Helper: Generate review comment for a line
+# -----------------------------
+async def generate_line_comment(line_text: str) -> str:
+    SYSTEM_PROMPT = """
+You are a senior software engineer reviewing code changes.
+Focus on readability, bugs, best practices, security, and improvements.
+Provide a concise comment for this single line of code.
 """
+    resp = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Review this line:\n{line_text}"}
+        ],
+        temperature=0.7
+    )
+    return resp.choices[0].message.content.strip()
 
-response = client.chat.completions.create(
-    model="gpt-4o-mini",
-    messages=[{"role": "user", "content": prompt}],
-    temperature=0
-)
+# -----------------------------
+# Main: Post inline comments
+# -----------------------------
+async def main():
+    files = pr.get_files()
+    for file in files:
+        if not file.patch:
+            continue
 
-raw_output = response.choices[0].message.content.strip()
+        lines = file.patch.split("\n")
+        for idx, line in enumerate(lines):
+            # Example: flag risky terms
+            if any(term in line for term in ["netFlow[0]", "startBalance"]):
+                comment_text = await generate_line_comment(line)
+                try:
+                    pr.create_review_comment(
+                        body=comment_text,
+                        commit_id=pr.head.sha,
+                        path=file.filename,
+                        position=idx + 1,  # GitHub diff position
+                    )
+                    print(f"✅ Comment posted: {file.filename} line {idx+1}")
+                except Exception as e:
+                    print(f"❌ Failed to post comment: {e}")
+                    with open("review_comment.txt", "a") as f:
+                        f.write(f"{file.filename} line {idx+1}: {comment_text}\n")
 
-# --- Step 3: Parse JSON ---
-try:
-    comments = json.loads(raw_output)
-except json.JSONDecodeError:
-    print("⚠️ OpenAI did not return valid JSON. Output was:\n", raw_output)
-    comments = []
-
-# --- Step 4: Post inline comments to GitHub ---
-url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/comments"
-
-for c in comments:
-    payload = {
-        "body": c["comment"],
-        "commit_id": commit_id,
-        "path": c["file"],
-        "line": c["line"],
-        "side": "RIGHT"
-    }
-    r = requests.post(url, headers=headers, json=payload)
-
-    if r.status_code == 201:
-        print(f"✅ Comment posted on {c['file']}:{c['line']}")
-    else:
-        print(f"❌ Failed to post comment: {r.status_code}, {r.text}")
+if __name__ == "__main__":
+    asyncio.run(main())
 
