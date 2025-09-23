@@ -8,11 +8,11 @@ from openai import AsyncOpenAI
 # -----------------------------
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 GITHUB_REPO = os.environ.get("GITHUB_REPOSITORY")
-PR_NUMBER = int(os.environ.get("PR_NUMBER", 1))
+PR_NUMBER = int(os.environ.get("PR_NUMBER", 0))
 OPENAI_KEY = os.environ.get("OPENAI_API_KEY")
 
-if not all([GITHUB_TOKEN, GITHUB_REPO, OPENAI_KEY]):
-    raise EnvironmentError("Please set GITHUB_TOKEN, GITHUB_REPOSITORY, and OPENAI_API_KEY")
+if not all([GITHUB_TOKEN, GITHUB_REPO, OPENAI_KEY, PR_NUMBER]):
+    raise EnvironmentError("Missing one of: GITHUB_TOKEN, GITHUB_REPOSITORY, OPENAI_API_KEY, PR_NUMBER")
 
 # -----------------------------
 # GitHub setup
@@ -40,7 +40,6 @@ with open("diff.txt") as f:
 # Helper: find lines to comment
 # -----------------------------
 def find_lines_to_comment(diff, search_terms=None):
-    """Return a list of (line_number, line_text) for lines to comment."""
     lines = diff.split("\n")
     result = []
     for i, line in enumerate(lines, start=1):
@@ -53,7 +52,6 @@ def find_lines_to_comment(diff, search_terms=None):
 
 # Example: risky patterns to flag
 search_terms = ["netFlow[0]", "startBalance"]
-
 lines_to_comment = find_lines_to_comment(diff_text, search_terms)
 
 # -----------------------------
@@ -79,15 +77,16 @@ Provide a concise comment for this single line of code.
 # Post comments to PR
 # -----------------------------
 async def main():
-    for diff_line_number, line_text in lines_to_comment:
-        comment_text = await generate_line_comment(line_text)
+    tasks = [generate_line_comment(line) for _, line in lines_to_comment]
+    comments = await asyncio.gather(*tasks)
+
+    for (diff_line_number, line_text), comment_text in zip(lines_to_comment, comments):
         try:
             pr.create_review_comment(
                 body=comment_text,
                 commit_id=pr.head.sha,
                 path="api/src/use-case/queries/get-insights/mwrr/helpers/calculate-mwrr-from-transactions.ts",
-                line=diff_line_number,
-                side="RIGHT"
+                position=diff_line_number
             )
             print(f"✅ Comment posted at diff line {diff_line_number}")
         except Exception as e:
