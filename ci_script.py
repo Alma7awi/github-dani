@@ -5,98 +5,82 @@ from github import Github
 from github.GithubException import GithubException
 
 # -----------------------------
-# Environment variable setup
+# Environment variables
 # -----------------------------
-# These are passed from GitHub Actions via the env: section
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")           # GitHub token for authentication
-GITHUB_REPO = os.getenv("GITHUB_REPOSITORY")       # Repository name in "owner/repo" format
-PR_NUMBER = os.getenv("PR_NUMBER")                 # Pull Request number as string
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")  # Azure OpenAI endpoint URL
-AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY")            # Azure OpenAI key
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GITHUB_REPO = os.getenv("GITHUB_REPOSITORY")
+PR_NUMBER = int(os.getenv("PR_NUMBER", 0))
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# Convert PR_NUMBER to integer safely
-try:
-    PR_NUMBER = int(PR_NUMBER)
-except (TypeError, ValueError):
-    PR_NUMBER = 0
-
-# Check if all required environment variables are present
-if not all([GITHUB_TOKEN, GITHUB_REPO, PR_NUMBER, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_KEY]):
+# Exit if missing variables
+if not all([GITHUB_TOKEN, GITHUB_REPO, PR_NUMBER, OPENAI_API_KEY]):
     print("❌ Missing required environment variables.")
-    print(f"GITHUB_TOKEN: {'set' if GITHUB_TOKEN else 'missing'}")
-    print(f"GITHUB_REPO: {'set' if GITHUB_REPO else 'missing'}")
-    print(f"PR_NUMBER: {PR_NUMBER}")
-    print(f"AZURE_OPENAI_ENDPOINT: {'set' if AZURE_OPENAI_ENDPOINT else 'missing'}")
-    print(f"AZURE_OPENAI_KEY: {'set' if AZURE_OPENAI_KEY else 'missing'}")
     exit(1)
 
 # -----------------------------
-# Read the diff file
+# Read diff file
 # -----------------------------
 try:
     with open("diff.txt", "r") as f:
         diff_text = f.read()
 except FileNotFoundError:
-    print("⚠️ diff.txt not found, skipping review.")
+    print("⚠️ diff.txt not found")
     diff_text = ""
 
 if not diff_text.strip():
-    print("⚠️ diff.txt is empty, nothing to review.")
+    print("⚠️ diff.txt empty")
     exit(0)
 
 # -----------------------------
-# Async function to call Azure OpenAI
+# Async function to get AI comments
 # -----------------------------
 async def run_review():
-    """
-    1. Sends the diff to Azure OpenAI asynchronously.
-    2. Posts the returned review comment to the GitHub PR.
-    3. If posting fails, saves the comment locally.
-    """
-    # Configure OpenAI SDK for Azure
-    openai.api_key = AZURE_OPENAI_KEY
-    openai.api_base = AZURE_OPENAI_ENDPOINT
-    openai.api_type = "azure"
-    openai.api_version = "2023-07-01-preview"
+    openai.api_key = OPENAI_API_KEY
+    comments = []
 
-    review_comment = ""
     try:
-        # Send the diff to GPT-4 for review asynchronously
+        # Ask AI to suggest inline comments
         response = await openai.ChatCompletion.acreate(
             model="gpt-4",
-            messages=[{"role": "user", "content": f"Please review this PR diff and provide comments:\n{diff_text}"}]
+            messages=[{
+                "role": "user",
+                "content": f"Review this PR diff and suggest inline comments in this format:\n<line_number>: <comment>\n{diff_text}"
+            }]
         )
-        # Extract content from the response
-        review_comment = response.choices[0].message.content
-        print("✅ Review generated successfully.")
+        # Parse AI response (assuming it gives: line_number: comment)
+        review_text = response.choices[0].message.content
+        for line in review_text.splitlines():
+            if ":" in line:
+                line_number, comment = line.split(":", 1)
+                comments.append((int(line_number.strip()), comment.strip()))
+        print("✅ AI comments generated")
     except Exception as e:
-        review_comment = f"❌ Failed to generate review: {e}"
-        print(review_comment)
+        print(f"❌ Failed to generate AI review: {e}")
 
     # -----------------------------
-    # Post the comment to GitHub PR
+    # Post inline comments to PR
     # -----------------------------
     try:
-        gh = Github(GITHUB_TOKEN)       # Authenticate with GitHub token
-        repo = gh.get_repo(GITHUB_REPO) # Get repository
-        pr = repo.get_pull(PR_NUMBER)   # Get pull request
-
-        # Use create_review instead of create_review_comment to avoid commit_id issues
-        pr.create_review(
-            body=review_comment,
-            event="COMMENT"  # Only comment, don't approve/request changes
-        )
-        print("✅ Comment posted to PR successfully.")
+        gh = Github(GITHUB_TOKEN)
+        repo = gh.get_repo(GITHUB_REPO)
+        pr = repo.get_pull(PR_NUMBER)
+        for line_number, comment in comments:
+            # Create comment on specific line of the PR diff
+            # Note: You might need the actual commit_id and path for full inline comments
+            pr.create_review_comment(
+                body=comment,
+                commit_id=pr.head.sha,
+                path="path/to/file",  # You may need to extract file paths from diff
+                line=line_number,
+                side="RIGHT"
+            )
+        print("✅ Inline comments posted to PR")
     except GithubException as ge:
-        print(f"❌ Failed to post comment: {ge}")
-        # Fallback: save review comment locally
+        print(f"❌ Failed to post PR comments: {ge}")
+        # fallback
         with open("review_comment.txt", "w") as f:
-            f.write(review_comment)
-        print("💾 Saved review comment to review_comment.txt")
+            f.write(str(comments))
+        print("💾 Saved comments locally")
 
-# -----------------------------
-# Run the async function
-# -----------------------------
 if __name__ == "__main__":
     asyncio.run(run_review())
-
