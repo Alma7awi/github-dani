@@ -1,30 +1,37 @@
 import os
 import asyncio
-from github import Github, Auth
-from github.GithubException import GithubException
 import openai
+from github import Github
+from github.GithubException import GithubException
 
 # -----------------------------
 # Environment variable setup
 # -----------------------------
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")           # GitHub token
-GITHUB_REPO = os.getenv("GITHUB_REPOSITORY")       # e.g., "owner/repo"
-PR_NUMBER = os.getenv("PR_NUMBER")                 # Pull Request number
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")       # OpenAI API key
+# GitHub-related variables
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GITHUB_REPO = os.getenv("GITHUB_REPOSITORY")
+PR_NUMBER = int(os.getenv("PR_NUMBER", 0))
 
-# Convert PR_NUMBER to integer
-try:
-    PR_NUMBER = int(PR_NUMBER)
-except (TypeError, ValueError):
-    PR_NUMBER = 0
+# OpenAI Proxy credentials (safe from GitHub secrets)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 
-# Check required environment variables
+# Validate required environment variables
 if not all([GITHUB_TOKEN, GITHUB_REPO, PR_NUMBER, OPENAI_API_KEY]):
     print("❌ Missing required environment variables.")
+    print(f"GITHUB_TOKEN: {'set' if GITHUB_TOKEN else 'missing'}")
+    print(f"GITHUB_REPO: {GITHUB_REPO or 'missing'}")
+    print(f"PR_NUMBER: {PR_NUMBER or 'missing'}")
+    print(f"OPENAI_API_KEY: {'set' if OPENAI_API_KEY else 'missing'}")
+    print(f"OPENAI_API_BASE: {OPENAI_API_BASE}")
     exit(1)
 
+# Configure OpenAI client
+openai.api_key = OPENAI_API_KEY
+openai.api_base = OPENAI_API_BASE
+
 # -----------------------------
-# Read diff.txt
+# Read the diff file
 # -----------------------------
 try:
     with open("diff.txt", "r") as f:
@@ -38,81 +45,51 @@ if not diff_text.strip():
     exit(0)
 
 # -----------------------------
-# Async function to generate AI review using synchronous API in thread
-# -----------------------------
-async def generate_ai_review(diff_text: str) -> str:
-    """
-    Calls OpenAI synchronously in a separate thread to work with asyncio.
-    Uses gpt-3.5-turbo to avoid model access issues.
-    """
-    openai.api_key = OPENAI_API_KEY
-    try:
-        # Run synchronous API call in a thread
-        response = await asyncio.to_thread(
-            openai.chat.completions.create,
-            model="gpt-3.5-turbo",  # changed from gpt-4 to avoid 404
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"Review this PR diff and suggest inline comments in this format:\n<file_path>:<line_number>:<comment>\n{diff_text}"
-                }
-            ]
-        )
-        review_text = response.choices[0].message.content
-        print("✅ AI review generated successfully.")
-        return review_text
-    except Exception as e:
-        print(f"❌ OpenAI request failed: {e}")
-        return ""
-
-# -----------------------------
-# Async function to post PR comments
+# Async function for AI review
 # -----------------------------
 async def run_review():
-    ai_comments = []
-
-    # Get AI review
-    review_text = await generate_ai_review(diff_text)
-
-    # Parse AI response into (file_path, line_number, comment)
-    for line in review_text.splitlines():
-        if line.strip() and line.count(":") >= 2:
-            parts = line.split(":", 2)
-            file_path = parts[0].strip()
-            try:
-                line_number = int(parts[1].strip())
-                comment = parts[2].strip()
-                ai_comments.append((file_path, line_number, comment))
-            except ValueError:
-                continue  # skip invalid lines
-
-    # Post comments to GitHub PR
+    review_comment = ""
     try:
-        gh = Github(auth=Auth.Token(GITHUB_TOKEN))
+        # Ask the AI to review the diff
+        response = await openai.chat.completions.acreate(
+            model="gpt-4o-mini",  # lightweight & cost-efficient model
+            messages=[
+                {"role": "system", "content": "You are a code review assistant."},
+                {"role": "user", "content": f"Review this Git diff and suggest improvements:\n{diff_text}"}
+            ],
+            temperature=0.3,
+            max_tokens=500
+        )
+        review_comment = response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"❌ OpenAI request failed: {e}")
+        review_comment = f"❌ Failed to generate AI review: {e}"
+
+    # -----------------------------
+    # Post comment to GitHub PR
+    # -----------------------------
+    try:
+        gh = Github(auth=None, login_or_token=GITHUB_TOKEN)  # GitHub client
         repo = gh.get_repo(GITHUB_REPO)
         pr = repo.get_pull(PR_NUMBER)
 
-        for file_path, line_number, comment in ai_comments:
-            pr.create_review_comment(
-                body=comment,
-                commit_id=pr.head.sha,
-                path=file_path,
-                line=line_number,
-                side="RIGHT"
-            )
-        print(f"✅ Inline comments posted to PR #{PR_NUMBER} successfully.")
-
+        # Post as a PR review comment
+        pr.create_review(
+            body=review_comment,
+            event="COMMENT"  # Just a neutral comment
+        )
+        print(f"✅ Comment posted to PR #{PR_NUMBER} successfully.")
     except GithubException as ge:
-        print(f"❌ Failed to post PR comments: {ge}")
-        # Fallback: save comments locally
+        print(f"❌ Failed to post comment: {ge}")
+        # Fallback: save locally
         with open("review_comment.txt", "w") as f:
-            for file_path, line_number, comment in ai_comments:
-                f.write(f"{file_path}:{line_number}:{comment}\n")
-        print("💾 Saved comments locally to review_comment.txt")
+            f.write(review_comment)
+        print("💾 Saved review_comment.txt instead.")
 
 # -----------------------------
-# Run async review
+# Run async function
 # -----------------------------
 if __name__ == "__main__":
     asyncio.run(run_review())
+
 
