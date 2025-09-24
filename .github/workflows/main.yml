@@ -30,7 +30,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install PyGithub azure-identity azure-ai-openai
+          pip install openai PyGithub azure-identity
 
       # Generate diff against the target branch
       - name: Generate diff
@@ -49,3 +49,4 @@ jobs:
           AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
           AZURE_OPENAI_KEY: ${{ secrets.AZURE_OPENAI_KEY }}
         run: python ci_script.py
+
