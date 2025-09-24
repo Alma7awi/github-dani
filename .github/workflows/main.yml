@@ -13,13 +13,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout repository
+      # Checkout the repo to get code and diffs
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # Fetch full history to generate diffs
 
-      # Setup Python
+      # Setup Python 3.11
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -31,7 +31,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install openai PyGithub
 
-      # Generate diff
+      # Generate diff file
       - name: Generate diff
         shell: bash
         run: |
@@ -39,7 +39,7 @@ jobs:
           git fetch origin "$TARGET_BRANCH"
           git diff origin/"$TARGET_BRANCH"...HEAD > diff.txt || echo "No changes to diff"
 
-      # Debug environment variables
+      # Debug environment variables to ensure they are passed correctly
       - name: Debug environment variables
         run: |
           echo "GITHUB_TOKEN is set: ${GITHUB_TOKEN:+Yes}"
