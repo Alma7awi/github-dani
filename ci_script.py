@@ -3,7 +3,6 @@ import asyncio
 import openai
 from github import Github
 from github.GithubException import GithubException
-from azure.identity.aio import DefaultAzureCredential
 
 # -----------------------------
 # Environment variable setup
@@ -37,18 +36,20 @@ if not diff_text.strip():
 # Async function to call Azure OpenAI
 # -----------------------------
 async def run_review():
-    # Set up OpenAI client
+    # Configure OpenAI to use Azure endpoint
     openai.api_key = AZURE_OPENAI_KEY
     openai.api_base = AZURE_OPENAI_ENDPOINT
+    openai.api_type = "azure"
+    openai.api_version = "2023-07-01-preview"
 
     review_comment = ""
     try:
-        # Send the diff to OpenAI asynchronously
-        response = await openai.ChatCompletion.create(
+        # Send the diff to Azure OpenAI asynchronously
+        response = await openai.ChatCompletion.acreate(
             model="gpt-4",
             messages=[{"role": "user", "content": f"Please review this PR diff and provide comments:\n{diff_text}"}]
         )
-        review_comment = response['choices'][0]['message']['content']
+        review_comment = response.choices[0].message.content
         print("✅ Review generated successfully.")
     except Exception as e:
         review_comment = f"❌ Failed to generate review: {e}"
@@ -62,7 +63,7 @@ async def run_review():
         repo = gh.get_repo(GITHUB_REPO)
         pr = repo.get_pull(PR_NUMBER)
 
-        # Use create_review (not create_review_comment) to avoid commit_id errors
+        # Use create_review to avoid commit_id issues
         pr.create_review(
             body=review_comment,
             event="COMMENT"
@@ -75,8 +76,7 @@ async def run_review():
             f.write(review_comment)
         print("💾 Saved review comment to review_comment.txt")
 
-# -----------------------------
 # Run async function
-# -----------------------------
 if __name__ == "__main__":
     asyncio.run(run_review())
+
