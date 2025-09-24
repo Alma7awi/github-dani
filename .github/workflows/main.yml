@@ -13,53 +13,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout the repo to get code and diffs
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # Fetch full history to generate diffs
+          fetch-depth: 0
 
-      # Setup Python 3.11
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.11"
 
-      # Install dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install openai PyGithub
 
-      # Generate diff file
       - name: Generate diff
         shell: bash
         run: |
           TARGET_BRANCH="${{ github.base_ref }}"
           git fetch origin "$TARGET_BRANCH"
-          git diff origin/"$TARGET_BRANCH"...HEAD > diff.txt || echo "No changes to diff"
+          git diff origin/"$TARGET_BRANCH"...HEAD > diff.txt || echo "No changes"
 
-      # Debug environment variables to ensure they are passed correctly
-      - name: Debug environment variables
-        run: |
-          echo "GITHUB_TOKEN is set: ${GITHUB_TOKEN:+Yes}"
-          echo "GITHUB_REPOSITORY=$GITHUB_REPOSITORY"
-          echo "PR_NUMBER=$PR_NUMBER"
-          echo "AZURE_OPENAI_ENDPOINT is set: ${AZURE_OPENAI_ENDPOINT:+Yes}"
-          echo "AZURE_OPENAI_KEY is set: ${AZURE_OPENAI_KEY:+Yes}"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
-          AZURE_OPENAI_KEY: ${{ secrets.AZURE_OPENAI_KEY }}
-
-      # Run PR review script
       - name: Run PR review script
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
-          AZURE_OPENAI_KEY: ${{ secrets.AZURE_OPENAI_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python ci_script.py
+
