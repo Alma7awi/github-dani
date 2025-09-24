@@ -1,18 +1,18 @@
 import os
 import asyncio
-import openai
 from github import Github, Auth
 from github.GithubException import GithubException
+import openai
 
 # -----------------------------
 # Environment variable setup
 # -----------------------------
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")           # GitHub token
 GITHUB_REPO = os.getenv("GITHUB_REPOSITORY")       # e.g., "owner/repo"
-PR_NUMBER = os.getenv("PR_NUMBER")                 # PR number
+PR_NUMBER = os.getenv("PR_NUMBER")                 # Pull Request number
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")       # OpenAI API key
 
-# Convert PR_NUMBER to integer
+# Convert PR_NUMBER to int
 try:
     PR_NUMBER = int(PR_NUMBER)
 except (TypeError, ValueError):
@@ -38,17 +38,15 @@ if not diff_text.strip():
     exit(0)
 
 # -----------------------------
-# Function to get AI review (sync inside async)
+# Async function to generate AI review using new OpenAI v1 API
 # -----------------------------
-async def get_ai_review(diff_text: str) -> str:
+async def generate_ai_review(diff_text: str) -> str:
     """
-    Sends the diff to OpenAI synchronously in a separate thread to avoid blocking.
-    Returns the AI review text.
+    Sends diff_text to OpenAI asynchronously and returns the AI review.
     """
     openai.api_key = OPENAI_API_KEY
     try:
-        response = await asyncio.to_thread(
-            openai.ChatCompletion.create,  # sync method
+        response = await openai.chat.completions.acreate(
             model="gpt-4",
             messages=[
                 {
@@ -70,8 +68,8 @@ async def get_ai_review(diff_text: str) -> str:
 async def run_review():
     ai_comments = []
 
-    # Get AI review text
-    review_text = await get_ai_review(diff_text)
+    # Get AI review
+    review_text = await generate_ai_review(diff_text)
 
     # Parse AI response into (file_path, line_number, comment)
     for line in review_text.splitlines():
@@ -83,22 +81,24 @@ async def run_review():
                 comment = parts[2].strip()
                 ai_comments.append((file_path, line_number, comment))
             except ValueError:
-                continue  # Skip invalid lines
+                continue  # skip invalid lines
 
+    # -----------------------------
     # Post comments to GitHub PR
+    # -----------------------------
     try:
-        gh = Github(auth=Auth.Token(GITHUB_TOKEN))  # Correct auth
+        gh = Github(auth=Auth.Token(GITHUB_TOKEN))  # Updated auth
         repo = gh.get_repo(GITHUB_REPO)
         pr = repo.get_pull(PR_NUMBER)
 
         for file_path, line_number, comment in ai_comments:
-            # Post inline comment on PR diff
+            # Post inline comment on the PR
             pr.create_review_comment(
                 body=comment,
                 commit_id=pr.head.sha,
                 path=file_path,
                 line=line_number,
-                side="RIGHT"  # Comment on the changed line
+                side="RIGHT"
             )
 
         print("✅ Inline comments posted to PR successfully.")
