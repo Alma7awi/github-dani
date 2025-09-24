@@ -1,6 +1,5 @@
 name: PR Review Bot
 
-# Trigger on PR events
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -11,42 +10,42 @@ permissions:
 
 jobs:
   review:
-    name: Run PR Review
     runs-on: ubuntu-latest
+    name: Run PR Review
 
     steps:
-      # 1️⃣ Checkout repository
+      # Checkout repo
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # Full history for diff generation
+          fetch-depth: 0
 
-      # 2️⃣ Set up Python 3.11
+      # Setup Python
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.11"
 
-      # 3️⃣ Install required packages
+      # Install dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install PyGithub openai
 
-      # 4️⃣ Generate diff.txt against the PR base branch
+      # Generate diff file
       - name: Generate diff
-        shell: bash
         run: |
-          TARGET_BRANCH="${{ github.event.pull_request.base.ref }}"
+          TARGET_BRANCH="${{ github.base_ref }}"
           git fetch origin "$TARGET_BRANCH"
-          git diff origin/"$TARGET_BRANCH"...HEAD > diff.txt || echo "No changes detected"
+          git diff origin/"$TARGET_BRANCH"...HEAD > diff.txt || echo "No changes"
 
-      # 5️⃣ Run the Python PR review script
+      # Run PR review script
       - name: Run PR review script
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_PROXY_KEY }}
+          OPENAI_API_BASE: ${{ secrets.OPENAI_PROXY_BASE }}
         run: |
           python ci_script.py
