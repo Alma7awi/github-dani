@@ -7,17 +7,18 @@ import openai
 # -----------------------------
 # Environment variable setup
 # -----------------------------
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-GITHUB_REPO = os.getenv("GITHUB_REPOSITORY")
-PR_NUMBER = os.getenv("PR_NUMBER")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")           # GitHub token
+GITHUB_REPO = os.getenv("GITHUB_REPOSITORY")       # e.g., "owner/repo"
+PR_NUMBER = os.getenv("PR_NUMBER")                 # Pull Request number
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")       # OpenAI API key
 
-# Convert PR_NUMBER to int
+# Convert PR_NUMBER to integer
 try:
     PR_NUMBER = int(PR_NUMBER)
 except (TypeError, ValueError):
     PR_NUMBER = 0
 
+# Check required environment variables
 if not all([GITHUB_TOKEN, GITHUB_REPO, PR_NUMBER, OPENAI_API_KEY]):
     print("❌ Missing required environment variables.")
     exit(1)
@@ -37,17 +38,19 @@ if not diff_text.strip():
     exit(0)
 
 # -----------------------------
-# Async function to get AI review using sync call in a thread
+# Async function to generate AI review using synchronous API in thread
 # -----------------------------
 async def generate_ai_review(diff_text: str) -> str:
     """
     Calls OpenAI synchronously in a separate thread to work with asyncio.
+    Uses gpt-3.5-turbo to avoid model access issues.
     """
     openai.api_key = OPENAI_API_KEY
     try:
+        # Run synchronous API call in a thread
         response = await asyncio.to_thread(
-            openai.chat.completions.create,  # synchronous API
-            model="gpt-4",
+            openai.chat.completions.create,
+            model="gpt-3.5-turbo",  # changed from gpt-4 to avoid 404
             messages=[
                 {
                     "role": "user",
@@ -59,7 +62,7 @@ async def generate_ai_review(diff_text: str) -> str:
         print("✅ AI review generated successfully.")
         return review_text
     except Exception as e:
-        print(f"❌ Failed to generate AI review: {e}")
+        print(f"❌ OpenAI request failed: {e}")
         return ""
 
 # -----------------------------
@@ -68,6 +71,7 @@ async def generate_ai_review(diff_text: str) -> str:
 async def run_review():
     ai_comments = []
 
+    # Get AI review
     review_text = await generate_ai_review(diff_text)
 
     # Parse AI response into (file_path, line_number, comment)
@@ -80,9 +84,9 @@ async def run_review():
                 comment = parts[2].strip()
                 ai_comments.append((file_path, line_number, comment))
             except ValueError:
-                continue
+                continue  # skip invalid lines
 
-    # Post comments to GitHub
+    # Post comments to GitHub PR
     try:
         gh = Github(auth=Auth.Token(GITHUB_TOKEN))
         repo = gh.get_repo(GITHUB_REPO)
@@ -96,11 +100,11 @@ async def run_review():
                 line=line_number,
                 side="RIGHT"
             )
-        print("✅ Inline comments posted to PR successfully.")
+        print(f"✅ Inline comments posted to PR #{PR_NUMBER} successfully.")
 
     except GithubException as ge:
         print(f"❌ Failed to post PR comments: {ge}")
-        # Fallback: save locally
+        # Fallback: save comments locally
         with open("review_comment.txt", "w") as f:
             for file_path, line_number, comment in ai_comments:
                 f.write(f"{file_path}:{line_number}:{comment}\n")
@@ -111,3 +115,4 @@ async def run_review():
 # -----------------------------
 if __name__ == "__main__":
     asyncio.run(run_review())
+
